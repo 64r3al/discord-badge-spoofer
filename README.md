@@ -40,3 +40,7 @@ badges update on discord's analytics cycle, so give it a day.
 
 this breaks discord's terms of service. use it on accounts you're fine losing.
 provided as-is with no warranty.
+
+## license
+
+released under the mit license. see [LICENSE](LICENSE).
