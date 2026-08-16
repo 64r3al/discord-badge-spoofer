@@ -8,19 +8,24 @@ so any number goes straight through.
 
 ## setup
 
-1. run it:
+1. install the one dependency (needs python 3.10+):
+   ```
+   pip install -r requirements.txt
+   ```
+
+2. run it:
    ```
    python spoofer.py
    ```
 
-2. first run asks for your discord account token. paste it and it gets saved to
+3. first run asks for your discord account token. paste it and it gets saved to
    `science_state.json` (reused after that).
 
-3. it also needs a cookie. pick option `3 refresh auth`, then paste the full
+4. it also needs a cookie. pick option `3 refresh auth`, then paste the full
    `cookie` header from any `/science` request in devtools (network tab). it gets
    saved to `science_state.json` too.
 
-4. **for the games-played count only:** add a real `executable_fingerprint`. grab
+5. **for the games-played count only:** add a real `executable_fingerprint`. grab
    it from a `launch_game` request in your own client's devtools and paste it into
    `science_state.json` as `"fingerprint": "..."`. hours (option `1`) don't need
    this - see [the games-played count needs a fingerprint](#the-games-played-count-needs-a-fingerprint).
