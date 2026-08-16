@@ -15,7 +15,7 @@ auth bits (all live in science_state.json):
     token            your account token, entered on first run
     cookie           cf_clearance, pasted by hand via menu option 3
     fingerprint      optional, only for the games-played count, pasted by hand
-    analytics_token  pulled off the gateway ready payload
+    analytics_token  fetched from GET /users/@me?with_analytics_token=true
     super_props      rebuilt on the fly
     heartbeat/launch random uuids we make up
 
@@ -24,7 +24,6 @@ this breaks discord tos. your account, your problem.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import sys
@@ -36,14 +35,12 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Iterator, Sequence
 
-import aiohttp
-
 # paths
 ROOT = Path(__file__).resolve().parent
 GAMES_FILE = ROOT.parent / "data" / "games.json"     # full game list, downloaded if absent
 STATE_FILE = ROOT / "science_state.json"             # token, cookie, cached auth
 
-GATEWAY_URL = "wss://gateway.discord.gg/?v=9&encoding=json"
+ME_URL = "https://discord.com/api/v9/users/@me?with_analytics_token=true"
 SCIENCE_URL = "https://discord.com/api/v9/science"
 GAMES_CDN_URL = "https://cdn.discordapp.com/detectables/games.json"  # used if games.json isn't there
 
@@ -189,43 +186,23 @@ def build_super_props(launch_signature: str, heartbeat_session: str) -> str:
     return base64.b64encode(raw).decode("ascii")
 
 
-async def _read_analytics_token(auth_token: str) -> str:
-    async with aiohttp.ClientSession() as session:
-        async with session.ws_connect(GATEWAY_URL, max_msg_size=0) as ws:
-            await ws.receive_json()  # hello
-            await ws.send_json({
-                "op": 2,
-                "d": {
-                    "token": auth_token,
-                    "capabilities": 30717,
-                    "properties": {
-                        "os": "Windows",
-                        "browser": "Discord Client",
-                        "release_channel": "stable",
-                        "client_version": CLIENT_VERSION,
-                        "os_version": OS_VERSION,
-                        "system_locale": "en-GB",
-                    },
-                },
-            })
-            async for msg in ws:
-                if msg.type != aiohttp.WSMsgType.TEXT:
-                    continue
-                data = json.loads(msg.data)
-                if data.get("op") == 9:
-                    raise RuntimeError("gateway rejected token (invalid session)")
-                if data.get("t") == "READY":
-                    token = data["d"].get("analytics_token")
-                    if not token:
-                        raise RuntimeError("READY payload had no analytics_token")
-                    return token
-    raise RuntimeError("gateway closed before READY")
+def _read_analytics_token(auth_token: str) -> str:
+    # the token that /science actually validates; a plain rest call returns it
+    req = urllib.request.Request(ME_URL, headers={"authorization": auth_token, "user-agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"token rejected ({exc.code})") from exc
+    token = data.get("analytics_token")
+    if not token:
+        raise RuntimeError("no analytics_token in response")
+    return token
 
 
 def refresh_auth(state: State) -> None:
     """grab a fresh analytics token and rebuild the bundle. leaves token + cookie alone."""
-    analytics_token = asyncio.run(_read_analytics_token(state.token))
-    state.analytics_token = analytics_token
+    state.analytics_token = _read_analytics_token(state.token)
     state.heartbeat_session = str(uuid.uuid4())
     state.launch_signature = str(uuid.uuid4())
     state.super_props = build_super_props(state.launch_signature, state.heartbeat_session)
