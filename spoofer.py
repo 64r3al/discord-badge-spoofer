@@ -74,6 +74,10 @@ class Console:
     RULE = "─" * 44
 
     def __init__(self) -> None:
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")  # glyphs must encode even when stdout is piped
+        except Exception:
+            pass
         if sys.platform == "win32":
             self._enable_ansi()
 
