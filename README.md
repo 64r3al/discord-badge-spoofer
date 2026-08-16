@@ -6,6 +6,14 @@ analytics endpoint the real client uses to credit playtime. `launch_game` regist
 a game as played and `duration_tracked_ms` adds the hours, and neither is validated,
 so any number goes straight through.
 
+> **status: experimental, unverified, work in progress.**
+> the events are accepted by discord (`204`) and match the real client's payloads,
+> but we have **not** yet confirmed a badge actually moving from spoofed events -
+> that's on discord's ~daily analytics cycle and still being tested. the
+> games-played count in particular depends on a per-user `executable_fingerprint`
+> we can't fully generate offline (see below). treat this as a reverse-engineering
+> experiment, not a guaranteed working tool. it may stop working at any time.
+
 ## setup
 
 1. install the one dependency (needs python 3.10+):
