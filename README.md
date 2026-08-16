@@ -1,9 +1,10 @@
 # discord-badge-spoofer
 
 inflates the discord "hours played" and "games played" profile badges by posting
-`running_game_heartbeat` events to `/api/v9/science` - the same analytics endpoint
-the real client uses to credit playtime. `duration_tracked_ms` isn't validated, so
-any number goes straight through.
+`launch_game` and `running_game_heartbeat` events to `/api/v9/science` - the same
+analytics endpoint the real client uses to credit playtime. `launch_game` registers
+a game as played and `duration_tracked_ms` adds the hours, and neither is validated,
+so any number goes straight through.
 
 ## setup
 
