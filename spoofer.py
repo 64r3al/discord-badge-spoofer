@@ -184,12 +184,6 @@ def build_super_props(launch_signature: str, heartbeat_session: str) -> str:
     return base64.b64encode(raw).decode("ascii")
 
 
-# a genuine client-generated fingerprint. discord never checks it against a real
-# binary (a fake pyinstaller stub's fingerprint counted, and this same blob worked
-# for two different games), so this captured one works for any game as a fallback.
-KNOWN_GOOD_FINGERPRINT = "Ab5ekwRAndO33eBmOZ4dWY3TpzalXtVw3h783BTvEntvVk2ORt0xBKfZKra1j3ByHhVBmJKf6vQYebtCvKJ2VJ08gypcer1XYcKsqlQImur00n9r02c7hhbj090CgjWqbRTM+GfX5MXA8+dwVogA73/Saf+DTeNANQhU6Nriguu0vGVsikCd07fdZIS49B2ZiNM="
-
-
 def game_fingerprint(game_id: str) -> str:
     # only the string is ever sent (never a real exe), so we fabricate one. the real
     # blob is 146 bytes with a 0x01 version byte; we mirror that shape. deterministic
