@@ -1,0 +1,10 @@
+# local state
+science_state.json
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+
+# game cache
+data/
