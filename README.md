@@ -16,20 +16,18 @@ so any number goes straight through.
 
 ## setup
 
-1. install the one dependency (needs python 3.10+):
-   ```
-   pip install -r requirements.txt
-   ```
+no dependencies - pure python stdlib (needs python 3.10+).
 
-2. run it:
+1. run it:
    ```
    python spoofer.py
    ```
 
-3. first run asks for your discord account token. paste it and it gets saved to
-   `science_state.json` (reused after that).
+2. first run asks for your discord account token. paste it and it gets saved to
+   `science_state.json` (reused after that). the analytics token is fetched
+   automatically from `GET /users/@me?with_analytics_token=true`.
 
-4. it also needs a cookie. pick option `3 refresh auth`, then paste the full
+3. it also needs a cookie. pick option `3 refresh auth`, then paste the full
    `cookie` header from any `/science` request in devtools (network tab). it gets
    saved to `science_state.json` too.
 
@@ -48,7 +46,7 @@ so any number goes straight through.
 ## how auth works
 
 - `token` - your account token, entered on first run, saved to `science_state.json`
-- `analytics_token` - pulled from the gateway ready payload automatically
+- `analytics_token` - fetched from `GET /users/@me?with_analytics_token=true`
 - `super_props` / heartbeat / launch ids - generated automatically
 - `cookie` (cf_clearance) - pasted by hand, via option `3`
 - `fingerprint` - optional, only needed for the games-played count (see below)
