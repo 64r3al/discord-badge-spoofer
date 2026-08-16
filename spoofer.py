@@ -562,7 +562,11 @@ class App:
             print(f"  {C.ORANGE}3{C.RESET} {C.WHITE}refresh auth{C.RESET} {C.GREY}· cookie {cookie_state}{C.RESET}")
             print(f"  {C.ORANGE}4{C.RESET} {C.WHITE}exit{C.RESET}")
             C.rule()
-            choice = input(f"  {C.ORANGE}›{C.RESET} ").strip()
+
+            # re-prompt on empty/invalid input without reprinting the options
+            choice = ""
+            while choice not in ("1", "2", "3", "4"):
+                choice = input(f"  {C.ORANGE}›{C.RESET} ").strip()
 
             if choice == "1":
                 self.module_playtime()
