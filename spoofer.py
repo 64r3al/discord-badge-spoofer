@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
 import json
 import sys
 import time
@@ -129,6 +128,7 @@ class State:
 
     token: str = ""
     cookie: str = ""
+    fingerprint: str = ""
     analytics_token: str = ""
     super_props: str = ""
     heartbeat_session: str = ""
@@ -182,18 +182,6 @@ def build_super_props(launch_signature: str, heartbeat_session: str) -> str:
     }
     raw = json.dumps(props, separators=(",", ":")).encode("utf-8")
     return base64.b64encode(raw).decode("ascii")
-
-
-def game_fingerprint(game_id: str) -> str:
-    # only the string is ever sent (never a real exe), so we fabricate one. the real
-    # blob is 146 bytes with a 0x01 version byte; we mirror that shape. deterministic
-    # from game_id keeps it unique per game and persistent across runs.
-    material = b""
-    counter = 0
-    while len(material) < 145:
-        material += hashlib.sha512(f"revere:{game_id}:{counter}".encode()).digest()
-        counter += 1
-    return base64.b64encode(bytes([0x01]) + material[:145]).decode("ascii")
 
 
 async def _read_analytics_token(auth_token: str) -> str:
@@ -299,49 +287,50 @@ class ScienceClient:
 
     def build_launch(self, game: Game) -> dict:
         now = int(time.time() * 1000)
-        return {
-            "type": "launch_game",
-            "properties": {
-                "client_track_timestamp": now,
-                "client_heartbeat_session_id": self.state.heartbeat_session,
-                "event_sequence_number": self._next_seq(),
-                "game": game.name,
-                "game_id": game.id,
-                "verified": True,
-                "elevated": False,
-                "is_launcher": False,
-                "game_platform": "desktop",
-                "detection_method": "verified_game",
-                "is_overlay_enabled": False,
-                "is_overlay_game_enabled": True,
-                "is_overlay_game_source": "OOP_DEFAULT_DATABASE",
-                "fullscreen_type": "UNKNOWN",
-                "hardware_display_count": 1,
-                "overlay_method": "Disabled",
-                "activity_status_enabled": True,
-                "activity_status_shared_guilds": [],
-                "current_user_status": "online",
-                "game_detection_enabled": True,
-                "executable_path": game.exe,
-                # voice/guild/perf left null - real for "not in voice" and we don't fake identifying data
-                "voice_channel_id": None,
-                "voice_channel_type": None,
-                "voice_channel_bitrate": None,
-                "voice_channel_guild_id": None,
-                "hidden_by_distributor": False,
-                "game_metadata": None,
-                "executable_fingerprint": game_fingerprint(game.id),
-                "client_performance_cpu": None,
-                "client_performance_memory": None,
-                "cpu_core_count": None,
-                "accessibility_features": 0,
-                "rendered_locale": "en-GB",
-                "launch_signature": self.state.launch_signature,
-                "client_rtc_state": None,
-                "client_app_state": "focused",
-                "client_send_timestamp": now,
-            },
+        props = {
+            "client_track_timestamp": now,
+            "client_heartbeat_session_id": self.state.heartbeat_session,
+            "event_sequence_number": self._next_seq(),
+            "game": game.name,
+            "game_id": game.id,
+            "verified": True,
+            "elevated": False,
+            "is_launcher": False,
+            "game_platform": "desktop",
+            "detection_method": "verified_game",
+            "is_overlay_enabled": False,
+            "is_overlay_game_enabled": True,
+            "is_overlay_game_source": "OOP_DEFAULT_DATABASE",
+            "fullscreen_type": "UNKNOWN",
+            "hardware_display_count": 1,
+            "overlay_method": "Disabled",
+            "activity_status_enabled": True,
+            "activity_status_shared_guilds": [],
+            "current_user_status": "online",
+            "game_detection_enabled": True,
+            "executable_path": game.exe,
+            # voice/guild/perf left null - real for "not in voice" and we don't fake identifying data
+            "voice_channel_id": None,
+            "voice_channel_type": None,
+            "voice_channel_bitrate": None,
+            "voice_channel_guild_id": None,
+            "hidden_by_distributor": False,
+            "game_metadata": None,
+            # real captured fingerprint from science_state.json; user-scoped, can't be faked
+            "executable_fingerprint": self.state.fingerprint,
+            "client_performance_cpu": None,
+            "client_performance_memory": None,
+            "cpu_core_count": None,
+            "accessibility_features": 0,
+            "rendered_locale": "en-GB",
+            "launch_signature": self.state.launch_signature,
+            "client_rtc_state": None,
+            "client_app_state": "focused",
+            "client_send_timestamp": now,
         }
+        if not self.state.fingerprint:
+            del props["executable_fingerprint"]
+        return {"type": "launch_game", "properties": props}
 
     def build_heartbeat(self, game: Game, duration_ms: int, session_id: str,
                         initial: bool, final: bool, ts: int | None = None) -> dict:
