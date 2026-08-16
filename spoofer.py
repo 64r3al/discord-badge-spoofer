@@ -16,7 +16,7 @@ auth bits (all live in science_state.json):
     cookie           cf_clearance, pasted by hand via menu option 3
     fingerprint      optional, only for the games-played count, pasted by hand
     analytics_token  fetched from GET /users/@me?with_analytics_token=true
-    super_props      rebuilt on the fly
+    super_props      from cordapi.dolfi.es (fallback: built locally)
     heartbeat/launch random uuids we make up
 
 this breaks discord tos. your account, your problem.
@@ -42,6 +42,7 @@ STATE_FILE = ROOT / "science_state.json"             # token, cookie, cached aut
 
 ME_URL = "https://discord.com/api/v9/users/@me?with_analytics_token=true"
 SCIENCE_URL = "https://discord.com/api/v9/science"
+PROPERTIES_URL = "https://cordapi.dolfi.es/api/v2/properties/windows"  # current super_props, local fallback
 GAMES_CDN_URL = "https://cdn.discordapp.com/detectables/games.json"  # used if games.json isn't there
 
 BATCH_SIZE = 50           # events per /science request
@@ -160,8 +161,9 @@ class State:
         return bool(self.token.strip())
 
 
-def build_super_props(launch_signature: str, heartbeat_session: str) -> str:
-    props = {
+def _local_props() -> dict:
+    # fallback client properties if cordapi is unreachable (build number may go stale)
+    return {
         "os": "Windows",
         "browser": "Discord Client",
         "release_channel": "stable",
@@ -171,17 +173,29 @@ def build_super_props(launch_signature: str, heartbeat_session: str) -> str:
         "app_arch": "x64",
         "system_locale": "en-GB",
         "has_client_mods": False,
-        "client_launch_id": str(uuid.uuid4()),
         "browser_user_agent": USER_AGENT,
         "browser_version": "42.7.1",
         "os_sdk_version": "26200",
         "client_build_number": CLIENT_BUILD_NUMBER,
         "native_build_number": NATIVE_BUILD_NUMBER,
         "client_event_source": None,
-        "launch_signature": launch_signature,
-        "client_heartbeat_session_id": heartbeat_session,
         "client_app_state": "focused",
     }
+
+
+def build_super_props(launch_signature: str, heartbeat_session: str) -> str:
+    # cordapi returns up-to-date client properties (keeps the build number current);
+    # inject our own session ids so it stays consistent with the events we send.
+    try:
+        req = urllib.request.Request(PROPERTIES_URL, method="POST", data=b"{}",
+                                     headers={"content-type": "application/json", "user-agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            props = json.loads(response.read().decode("utf-8"))["properties"]
+    except Exception:
+        props = _local_props()
+    props["client_launch_id"] = str(uuid.uuid4())
+    props["launch_signature"] = launch_signature
+    props["client_heartbeat_session_id"] = heartbeat_session
     raw = json.dumps(props, separators=(",", ":")).encode("utf-8")
     return base64.b64encode(raw).decode("ascii")
 
