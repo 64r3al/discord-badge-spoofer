@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import sys
 import time
@@ -56,13 +57,6 @@ CLIENT_VERSION = "1.0.9253"
 CLIENT_BUILD_NUMBER = 594031
 NATIVE_BUILD_NUMBER = 88414
 OS_VERSION = "10.0.26200"
-# hash of a game exe on disk. discord doesn't check it per-game (the same value was
-# accepted for two different games and a fake pyinstaller stub), so one value fits all.
-EXECUTABLE_FINGERPRINT = (
-    "Ab5ekwRAndO33eBmOZ4dWY3TpzalXtVw3h783BTvEntvVk2ORt0xBKfZKra1j3ByHhVBmJKf6vQYebtCvKJ2V"
-    "J08gypcer1XYcKsqlQImur00n9r02c7hhbj090CgjWqbRTM+GfX5MXA8+dwVogA73/Saf+DTeNANQhU6Nrigu"
-    "u0vGVsikCd07fdZIS49B2ZiNM="
-)
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) discord/1.0.9253 Chrome/148.0.7778.280 "
@@ -188,6 +182,24 @@ def build_super_props(launch_signature: str, heartbeat_session: str) -> str:
     }
     raw = json.dumps(props, separators=(",", ":")).encode("utf-8")
     return base64.b64encode(raw).decode("ascii")
+
+
+# a genuine client-generated fingerprint. discord never checks it against a real
+# binary (a fake pyinstaller stub's fingerprint counted, and this same blob worked
+# for two different games), so this captured one works for any game as a fallback.
+KNOWN_GOOD_FINGERPRINT = "Ab5ekwRAndO33eBmOZ4dWY3TpzalXtVw3h783BTvEntvVk2ORt0xBKfZKra1j3ByHhVBmJKf6vQYebtCvKJ2VJ08gypcer1XYcKsqlQImur00n9r02c7hhbj090CgjWqbRTM+GfX5MXA8+dwVogA73/Saf+DTeNANQhU6Nriguu0vGVsikCd07fdZIS49B2ZiNM="
+
+
+def game_fingerprint(game_id: str) -> str:
+    # only the string is ever sent (never a real exe), so we fabricate one. the real
+    # blob is 146 bytes with a 0x01 version byte; we mirror that shape. deterministic
+    # from game_id keeps it unique per game and persistent across runs.
+    material = b""
+    counter = 0
+    while len(material) < 145:
+        material += hashlib.sha512(f"revere:{game_id}:{counter}".encode()).digest()
+        counter += 1
+    return base64.b64encode(bytes([0x01]) + material[:145]).decode("ascii")
 
 
 async def _read_analytics_token(auth_token: str) -> str:
@@ -324,7 +336,7 @@ class ScienceClient:
                 "voice_channel_guild_id": None,
                 "hidden_by_distributor": False,
                 "game_metadata": None,
-                "executable_fingerprint": EXECUTABLE_FINGERPRINT,
+                "executable_fingerprint": game_fingerprint(game.id),
                 "client_performance_cpu": None,
                 "client_performance_memory": None,
                 "cpu_core_count": None,
