@@ -11,13 +11,13 @@ validated so any number goes straight through.
 run:
     python spoofer.py
 
-auth bits (all live in science_state.json):
-    token            your account token, entered on first run
-    cookie           cf_clearance, pasted by hand via menu option 3
-    fingerprint      optional, only for the games-played count, pasted by hand
-    analytics_token  fetched from GET /users/@me?with_analytics_token=true
-    super_props      from cordapi.dolfi.es (fallback: built locally)
-    heartbeat/launch random uuids we make up
+auth bits:
+    token            your account token, entered on first run           [saved]
+    cookie           cf_clearance, pasted by hand via menu option 3     [saved]
+    fingerprint      optional, only for the games-played count          [saved]
+    analytics_token  fetched from GET /users/@me?with_analytics_token=true, cached
+    super_props      from cordapi.dolfi.es (fallback: local)            [per run]
+    heartbeat/launch random uuids, fresh every run                      [per run]
 
 this breaks discord tos. your account, your problem.
 """
@@ -127,15 +127,12 @@ class Console:
 
 @dataclass
 class State:
-    """saved auth. token + cookie are yours to supply, the rest is auto."""
+    """persisted auth: token, cookie, fingerprint, and the cached analytics token."""
 
     token: str = ""
     cookie: str = ""
     fingerprint: str = ""
     analytics_token: str = ""
-    super_props: str = ""
-    heartbeat_session: str = ""
-    launch_signature: str = ""
     fetched_at: int = 0
 
     @classmethod
@@ -214,14 +211,28 @@ def _read_analytics_token(auth_token: str) -> str:
     return token
 
 
-def refresh_auth(state: State) -> None:
-    """grab a fresh analytics token and rebuild the bundle. leaves token + cookie alone."""
+def ensure_token(state: State) -> None:
+    """fetch + cache the analytics token if missing or stale."""
+    if not state.is_stale:
+        return
     state.analytics_token = _read_analytics_token(state.token)
-    state.heartbeat_session = str(uuid.uuid4())
-    state.launch_signature = str(uuid.uuid4())
-    state.super_props = build_super_props(state.launch_signature, state.heartbeat_session)
     state.fetched_at = int(time.time())
     state.save()
+
+
+@dataclass(frozen=True)
+class Session:
+    """per-run client identity: fresh uuids + super_props, made each launch, never saved."""
+
+    heartbeat_session: str
+    launch_signature: str
+    super_props: str
+
+    @classmethod
+    def new(cls) -> "Session":
+        hb = str(uuid.uuid4())
+        sig = str(uuid.uuid4())
+        return cls(hb, sig, build_super_props(sig, hb))
 
 
 @dataclass(frozen=True)
@@ -272,8 +283,9 @@ def load_games() -> list[Game]:
 class ScienceClient:
     """builds and posts launch_game and running_game_heartbeat events."""
 
-    def __init__(self, state: State) -> None:
+    def __init__(self, state: State, session: Session) -> None:
         self.state = state
+        self.session = session
         self._seq = 0
 
     def _next_seq(self) -> int:
@@ -285,7 +297,7 @@ class ScienceClient:
         now = int(time.time() * 1000)
         props = {
             "client_track_timestamp": now,
-            "client_heartbeat_session_id": self.state.heartbeat_session,
+            "client_heartbeat_session_id": self.session.heartbeat_session,
             "event_sequence_number": self._next_seq(),
             "game": game.name,
             "game_id": game.id,
@@ -319,7 +331,7 @@ class ScienceClient:
             "cpu_core_count": None,
             "accessibility_features": 0,
             "rendered_locale": "en-GB",
-            "launch_signature": self.state.launch_signature,
+            "launch_signature": self.session.launch_signature,
             "client_rtc_state": None,
             "client_app_state": "focused",
             "client_send_timestamp": now,
@@ -335,7 +347,7 @@ class ScienceClient:
             "type": "running_game_heartbeat",
             "properties": {
                 "client_track_timestamp": ts,
-                "client_heartbeat_session_id": self.state.heartbeat_session,
+                "client_heartbeat_session_id": self.session.heartbeat_session,
                 "event_sequence_number": self._next_seq(),
                 "game_id": game.id,
                 "game_name": game.name,
@@ -348,7 +360,7 @@ class ScienceClient:
                 "duration_tracked_ms": duration_ms,
                 "rtc_connection_id": None,
                 "media_session_id": None,
-                "launch_signature": self.state.launch_signature,
+                "launch_signature": self.session.launch_signature,
                 "client_app_state": "focused",
                 "client_send_timestamp": ts,
             },
@@ -383,7 +395,7 @@ class ScienceClient:
             "x-debug-options": "bugReporterEnabled",
             "x-discord-locale": "en-GB",
             "x-discord-timezone": "Europe/Oslo",
-            "x-super-properties": self.state.super_props,
+            "x-super-properties": self.session.super_props,
         })
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
@@ -432,6 +444,8 @@ class App:
     def __init__(self) -> None:
         self.console = Console()
         self.state = State.load()
+        self.session: Session | None = None
+        self.client: ScienceClient | None = None
         self.games: list[Game] = []
 
     # startup
@@ -454,11 +468,18 @@ class App:
         if not self.state.fingerprint:
             self.console.warn("fingerprint", "not set · games-played count won't credit (hours still work)")
 
-        # make sure the analytics token is fresh before the menu
-        if self.state.is_stale:
-            self._refresh(prompt_cookie=False)
+        try:
+            ensure_token(self.state)          # fetch analytics token if stale
+        except Exception as exc:
+            self.console.err("token", str(exc))
+            return
+        self._new_session()                    # fresh client identity for this run
 
         self.menu()
+
+    def _new_session(self) -> None:
+        self.session = Session.new()
+        self.client = ScienceClient(self.state, self.session)
 
     # auth
 
@@ -480,12 +501,14 @@ class App:
             else:
                 self.console.info("cookie unchanged")
 
-        self.console.info("fetching analytics token from gateway...")
+        self.console.info("fetching analytics token...")
         try:
-            refresh_auth(self.state)
+            self.state.fetched_at = 0          # force a refetch
+            ensure_token(self.state)
         except Exception as exc:
-            self.console.err("gateway", str(exc))
+            self.console.err("auth", str(exc))
             return
+        self._new_session()
         self.console.ok("auth", "refreshed")
 
     def _require_ready(self) -> bool:
@@ -493,7 +516,12 @@ class App:
             self.console.err("cookie", "not set · use option 3 to add one")
             return False
         if self.state.is_stale:
-            self._refresh(prompt_cookie=False)
+            try:
+                ensure_token(self.state)
+            except Exception as exc:
+                self.console.err("auth", str(exc))
+                return False
+            self._new_session()
         return bool(self.state.analytics_token)
 
     # modules
@@ -515,10 +543,9 @@ class App:
             f"{self.console.GREY}·{self.console.WHITE} {len(self.games) * hours:,.0f}h total"
         )
         self.console.rule()
-        client = ScienceClient(self.state)
-        ok = Spoofer(client, self.console).run(
+        ok = Spoofer(self.client, self.console).run(
             self.games,
-            lambda g: client.build_session(g, duration_ms),
+            lambda g: self.client.build_session(g, duration_ms),
         )
         print()
         self.console.ok("complete", f"{ok}/{len(self.games)} games · {ok * hours:,.0f}h claimed")
@@ -533,10 +560,9 @@ class App:
         )
         self.console.rule()
         # launch_game drives the played count; the open/close heartbeats add the minute
-        client = ScienceClient(self.state)
-        ok = Spoofer(client, self.console).run(
+        ok = Spoofer(self.client, self.console).run(
             self.games,
-            lambda g: client.build_session(g, 60 * 1000),
+            lambda g: self.client.build_session(g, 60 * 1000),
         )
         print()
         self.console.ok("complete", f"{ok}/{len(self.games)} games marked played")
