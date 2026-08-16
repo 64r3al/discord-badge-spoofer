@@ -329,12 +329,13 @@ class ScienceClient:
             },
         }
 
-    def build_heartbeat(self, game: Game, duration_ms: int) -> dict:
-        now = int(time.time() * 1000)
+    def build_heartbeat(self, game: Game, duration_ms: int, session_id: str,
+                        initial: bool, final: bool, ts: int | None = None) -> dict:
+        ts = int(time.time() * 1000) if ts is None else ts
         return {
             "type": "running_game_heartbeat",
             "properties": {
-                "client_track_timestamp": now,
+                "client_track_timestamp": ts,
                 "client_heartbeat_session_id": self.state.heartbeat_session,
                 "event_sequence_number": self._next_seq(),
                 "game_id": game.id,
@@ -342,17 +343,31 @@ class ScienceClient:
                 "game_metadata": None,
                 "game_executable": game.exe,
                 "game_detection_enabled": True,
-                "initial_heartbeat": True,
-                "final_heartbeat": True,
-                "game_session_id": str(uuid.uuid4()),
+                "initial_heartbeat": initial,
+                "final_heartbeat": final,
+                "game_session_id": session_id,
                 "duration_tracked_ms": duration_ms,
                 "rtc_connection_id": None,
                 "media_session_id": None,
                 "launch_signature": self.state.launch_signature,
                 "client_app_state": "focused",
-                "client_send_timestamp": now,
+                "client_send_timestamp": ts,
             },
         }
+
+    def build_session(self, game: Game, duration_ms: int) -> list[dict]:
+        # real client flow: open heartbeat (0ms) -> launch_game -> close heartbeat (full duration).
+        # both heartbeats share one game_session_id; timestamps span the duration when it's sane.
+        sid = str(uuid.uuid4())
+        now = int(time.time() * 1000)
+        start = now - duration_ms
+        if start < 0:                       # duration too large to backdate sensibly
+            start = now
+        return [
+            self.build_heartbeat(game, 0, sid, initial=True, final=False, ts=start),
+            self.build_launch(game),
+            self.build_heartbeat(game, duration_ms, sid, initial=False, final=True, ts=now),
+        ]
 
     def post(self, events: Sequence[dict]) -> int:
         """post a batch. returns the http status (204 = accepted)."""
@@ -501,7 +516,7 @@ class App:
         client = ScienceClient(self.state)
         ok = Spoofer(client, self.console).run(
             self.games,
-            lambda g: [client.build_launch(g), client.build_heartbeat(g, duration_ms)],
+            lambda g: client.build_session(g, duration_ms),
         )
         print()
         self.console.ok("complete", f"{ok}/{len(self.games)} games · {ok * hours:,.0f}h claimed")
@@ -515,11 +530,11 @@ class App:
             f"{self.console.GREY}·{self.console.WHITE} 1m each"
         )
         self.console.rule()
-        # launch_game likely drives the played count; heartbeat covers it either way
+        # launch_game drives the played count; the open/close heartbeats add the minute
         client = ScienceClient(self.state)
         ok = Spoofer(client, self.console).run(
             self.games,
-            lambda g: [client.build_launch(g), client.build_heartbeat(g, 60 * 1000)],
+            lambda g: client.build_session(g, 60 * 1000),
         )
         print()
         self.console.ok("complete", f"{ok}/{len(self.games)} games marked played")
