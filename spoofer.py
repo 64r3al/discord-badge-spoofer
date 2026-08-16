@@ -48,6 +48,7 @@ GAMES_CDN_URL = "https://cdn.discordapp.com/detectables/games.json"  # used if g
 BATCH_SIZE = 50           # events per /science request
 BATCH_DELAY = 0.3         # seconds between requests
 AUTH_MAX_AGE = 12 * 3600  # refetch the analytics token once the cache is older than this
+DEBUG = False
 
 # client identity
 CLIENT_VERSION = "1.0.9253"
@@ -386,8 +387,9 @@ class ScienceClient:
 
     def post(self, events: Sequence[dict]) -> int:
         """post a batch. returns the http status (204 = accepted)."""
-        body = json.dumps({"token": self.state.analytics_token, "events": list(events)}).encode("utf-8")
-        request = urllib.request.Request(SCIENCE_URL, data=body, method="POST", headers={
+        payload = {"token": self.state.analytics_token, "events": list(events)}
+        body = json.dumps(payload).encode("utf-8")
+        headers = {
             "accept": "*/*",
             "accept-language": "en-GB",
             "authorization": self.state.token,
@@ -400,7 +402,14 @@ class ScienceClient:
             "x-discord-locale": "en-GB",
             "x-discord-timezone": "Europe/Oslo",
             "x-super-properties": self.session.super_props,
-        })
+        }
+        if DEBUG:
+            print("\n" + "=" * 72)
+            print(f"POST {SCIENCE_URL} ({len(payload['events'])} events)")
+            print("headers:", json.dumps(headers, indent=2))
+            print("body:", json.dumps(payload, indent=2))
+            print("=" * 72)
+        request = urllib.request.Request(SCIENCE_URL, data=body, method="POST", headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
                 return response.status
