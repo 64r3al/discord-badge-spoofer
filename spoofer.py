@@ -56,6 +56,13 @@ CLIENT_VERSION = "1.0.9253"
 CLIENT_BUILD_NUMBER = 594031
 NATIVE_BUILD_NUMBER = 88414
 OS_VERSION = "10.0.26200"
+# hash of a game exe on disk. discord doesn't check it per-game (the same value was
+# accepted for two different games and a fake pyinstaller stub), so one value fits all.
+EXECUTABLE_FINGERPRINT = (
+    "Ab5ekwRAndO33eBmOZ4dWY3TpzalXtVw3h783BTvEntvVk2ORt0xBKfZKra1j3ByHhVBmJKf6vQYebtCvKJ2V"
+    "J08gypcer1XYcKsqlQImur00n9r02c7hhbj090CgjWqbRTM+GfX5MXA8+dwVogA73/Saf+DTeNANQhU6Nrigu"
+    "u0vGVsikCd07fdZIS49B2ZiNM="
+)
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) discord/1.0.9253 Chrome/148.0.7778.280 "
@@ -317,6 +324,7 @@ class ScienceClient:
                 "voice_channel_guild_id": None,
                 "hidden_by_distributor": False,
                 "game_metadata": None,
+                "executable_fingerprint": EXECUTABLE_FINGERPRINT,
                 "client_performance_cpu": None,
                 "client_performance_memory": None,
                 "cpu_core_count": None,
@@ -361,7 +369,7 @@ class ScienceClient:
         sid = str(uuid.uuid4())
         now = int(time.time() * 1000)
         start = now - duration_ms
-        if start < 0:                       # duration too large to backdate sensibly
+        if start < 0: # duration too large to backdate sensibly
             start = now
         return [
             self.build_heartbeat(game, 0, sid, initial=True, final=False, ts=start),
