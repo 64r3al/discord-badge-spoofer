@@ -460,6 +460,9 @@ class App:
             return
         self.console.info(f"loaded {self.console.GREEN}{len(self.games)}{self.console.WHITE} games")
 
+        if not self.state.fingerprint:
+            self.console.warn("fingerprint", "not set · games-played count won't credit (hours still work)")
+
         # make sure the analytics token is fresh before the menu
         if self.state.is_stale:
             self._refresh(prompt_cookie=False)
