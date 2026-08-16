@@ -115,7 +115,12 @@ class Console:
     def rule(self) -> None:
         print(f"  {self.GREY}{self.RULE}{self.RESET}")
 
+    def clear(self) -> None:
+        # clear screen + scrollback, home the cursor (vt processing is enabled)
+        print("\x1b[2J\x1b[3J\x1b[H", end="")
+
     def banner(self) -> None:
+        self.clear()
         print()
         print(f"  {self.ORANGE}spoofer{self.RESET} {self.GREY}·{self.RESET} {self.WHITE}discord badges{self.RESET}")
         print(f"    {self.GREY}by revere group{self.RESET}")
