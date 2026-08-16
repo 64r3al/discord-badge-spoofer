@@ -4,20 +4,20 @@ discord science spoofer - inflate the playtime and games-played badges.
 
 revere group, 2026. mit licensed (see LICENSE).
 
-posts running_game_heartbeat events to /api/v9/science, the same endpoint the
-real client uses to credit playtime. duration_tracked_ms isn't validated so any
-number goes straight through.
+posts launch_game and running_game_heartbeat events to /api/v9/science, the same
+endpoint the real client uses to credit playtime. duration_tracked_ms isn't
+validated so any number goes straight through.
 
 run:
     python spoofer.py
 
-auth bits:
-    auth_token       your account token, from ../spoof_config.json
+auth bits (all live in science_state.json):
+    token            your account token, entered on first run
+    cookie           cf_clearance, pasted by hand via menu option 3
+    fingerprint      optional, only for the games-played count, pasted by hand
     analytics_token  pulled off the gateway ready payload
     super_props      rebuilt on the fly
     heartbeat/launch random uuids we make up
-    cookie           the one thing you paste by hand (cf_clearance), saved in
-                     science_state.json. menu option 3 updates it.
 
 this breaks discord tos. your account, your problem.
 """
