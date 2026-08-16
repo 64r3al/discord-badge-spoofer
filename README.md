@@ -20,6 +20,11 @@ so any number goes straight through.
    `cookie` header from any `/science` request in devtools (network tab). it gets
    saved to `science_state.json` too.
 
+4. **for the games-played count only:** add a real `executable_fingerprint`. grab
+   it from a `launch_game` request in your own client's devtools and paste it into
+   `science_state.json` as `"fingerprint": "..."`. hours (option `1`) don't need
+   this - see [the games-played count needs a fingerprint](#the-games-played-count-needs-a-fingerprint).
+
 ## menu
 
 - `1` claim playtime - asks for hours per game, applies to every game
