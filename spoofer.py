@@ -139,12 +139,21 @@ class State:
     fingerprint: str = ""
     analytics_token: str = ""
     fetched_at: int = 0
+    used_games: list[str] = None  # game ids already claimed, rotate to avoid repeats
+    total_games_claimed: int = 0  # cumulative games claimed in this session
+    total_hours_claimed: float = 0.0  # cumulative hours claimed in this session
+
+    def __post_init__(self) -> None:
+        if self.used_games is None:
+            self.used_games = []
 
     @classmethod
     def load(cls) -> "State":
         if STATE_FILE.exists():
             data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-            return cls(**{k: data.get(k, v) for k, v in cls().__dict__.items()})
+            state = cls(**{k: data.get(k, v) for k, v in cls().__dict__.items() if k != "used_games"})
+            state.used_games = data.get("used_games", [])
+            return state
         return cls()
 
     def save(self) -> None:
@@ -465,29 +474,62 @@ class App:
 
     def start(self) -> None:
         self.console.banner()
+        time.sleep(0.8)
+        print()
 
+        # step 1: token
+        C = self.console
         if not self.state.has_token:
             self._prompt_token()
+        else:
+            C.ok("auth", "token loaded")
+            time.sleep(0.5)
         if not self.state.has_token:
-            self.console.err("token", "required to run")
+            C.err("token", "required to run")
             return
 
+        # step 2: cookie
+        if not self.state.has_cookie:
+            self.console.banner()
+            self._prompt_cookie()
+        else:
+            C.ok("auth", "cookie loaded")
+            time.sleep(0.5)
+        if not self.state.has_cookie:
+            C.err("cookie", "required to run")
+            return
+
+        # step 3: games
+        self.console.banner()
+        print()
+        C.info("loading games...")
+        time.sleep(0.4)
         self.games = load_games()
         if not self.games:
-            self.console.err("games", f"not found or empty: {GAMES_FILE}")
+            C.err("games", f"not found or empty: {GAMES_FILE}")
             return
-        self.console.info(f"loaded {self.console.GREEN}{len(self.games)}{self.console.WHITE} games")
+        C.ok("games", f"{C.ORANGE}{len(self.games)}{C.WHITE} loaded")
+        time.sleep(0.5)
 
+        # step 4: fingerprint warning
         if not self.state.fingerprint:
-            self.console.warn("fingerprint", "not set · games-played count won't credit (hours still work)")
+            print()
+            C.warn("fingerprint", "not set · games-played may not count credit (hours still work)")
+            time.sleep(0.5)
 
+        # step 5: auth
+        print()
+        C.info("validating auth...")
         try:
-            ensure_token(self.state)          # fetch analytics token if stale
+            ensure_token(self.state)
         except Exception as exc:
-            self.console.err("token", str(exc))
+            C.err("token", str(exc))
             return
-        self._new_session()                    # fresh client identity for this run
+        C.ok("auth", "ready")
+        time.sleep(0.5)
 
+        self._new_session()
+        print()
         self.menu()
 
     def _new_session(self) -> None:
@@ -503,10 +545,22 @@ class App:
             self.state.token = entered
             self.state.save()
             self.console.ok("token", "saved")
+            time.sleep(1.5)
 
-    def _refresh(self, prompt_cookie: bool) -> None:
-        if prompt_cookie:
-            self.console.info("paste a fresh cookie header (enter to keep the current one)")
+    def _prompt_cookie(self) -> None:
+        self.console.info("paste your cf_clearance cookie header")
+        entered = input(f"  {self.console.GREY}cookie:{self.console.RESET} ").strip()
+        if entered:
+            self.state.cookie = entered
+            self.state.save()
+            self.console.ok("cookie", "saved")
+            time.sleep(1.5)
+
+    def _refresh(self) -> None:
+        self.console.info("update cookie? [y/n]")
+        choice = input(f"  {self.console.GREY}›{self.console.RESET} ").strip().lower()
+        if choice in ("y", "yes"):
+            self.console.info("paste a fresh cookie header")
             entered = input(f"  {self.console.GREY}cookie:{self.console.RESET} ").strip()
             if entered:
                 self.state.cookie = entered
@@ -514,7 +568,7 @@ class App:
             else:
                 self.console.info("cookie unchanged")
 
-        self.console.info("fetching analytics token...")
+        self.console.info("refreshing analytics token...")
         try:
             self.state.fetched_at = 0          # force a refetch
             ensure_token(self.state)
@@ -522,7 +576,9 @@ class App:
             self.console.err("auth", str(exc))
             return
         self._new_session()
+        self.state.save()
         self.console.ok("auth", "refreshed")
+        time.sleep(1.5)
 
     def _require_ready(self) -> bool:
         if not self.state.has_cookie:
@@ -539,73 +595,111 @@ class App:
 
     # modules
 
-    def module_playtime(self) -> None:
+    def claim_games(self) -> None:
+        """claim playtime on selected games. prompts for count and hours."""
         if not self._require_ready():
             return
-        raw = input(f"  {self.console.GREY}hours per game:{self.console.RESET} ").strip()
-        try:
-            hours = float(raw)
-        except ValueError:
-            self.console.err("input", "invalid hours")
-            return
-        duration_ms = int(hours * 3600 * 1000)
+        C = self.console
         print()
-        self.console.info(
-            f"claiming {self.console.ORANGE}{hours:g}h{self.console.WHITE} on "
-            f"{self.console.ORANGE}{len(self.games)}{self.console.WHITE} games "
-            f"{self.console.GREY}·{self.console.WHITE} {len(self.games) * hours:,.0f}h total"
+        C.info(f"loaded {C.GREEN}{len(self.games)}{C.WHITE} games available")
+
+        # prompt for game count
+        raw_count = input(f"  {C.GREY}how many games? [all]:{C.RESET} ").strip()
+        try:
+            count = int(raw_count) if raw_count else len(self.games)
+        except ValueError:
+            C.err("input", "invalid count")
+            return
+        count = min(count, len(self.games))
+
+        # prompt for hours
+        raw_hours = input(f"  {C.GREY}hours per game? [1]:{C.RESET} ").strip()
+        try:
+            hours = float(raw_hours) if raw_hours else 1.0
+        except ValueError:
+            C.err("input", "invalid hours")
+            return
+
+        # select games: prefer unused, rotate through used if necessary
+        selected = self._select_games(count)
+        if not selected:
+            C.err("games", "none selected")
+            return
+
+        duration_ms = int(hours * 3600 * 1000)
+        total_hours = len(selected) * hours
+        print()
+        C.info(
+            f"claiming {C.ORANGE}{hours:g}h{C.WHITE} on "
+            f"{C.ORANGE}{len(selected)}{C.WHITE} games "
+            f"{C.GREY}·{C.WHITE} {total_hours:,.0f}h total"
         )
-        self.console.rule()
+        C.rule()
         ok = Spoofer(self.client, self.console).run(
-            self.games,
+            selected,
             lambda g: self.client.build_session(g, duration_ms),
         )
         print()
-        self.console.ok("complete", f"{ok}/{len(self.games)} games · {ok * hours:,.0f}h claimed")
+        C.ok("complete", f"{ok}/{len(selected)} games · {ok * hours:,.0f}h claimed")
+        # accumulate stats
+        self.state.total_games_claimed += ok
+        self.state.total_hours_claimed += ok * hours
+        self.state.save()
+        
+        C.rule()
+        input(f"  {C.ORANGE}›{C.RESET} press enter to continue")
+        C.rule()
 
-    def module_played_count(self) -> None:
-        if not self._require_ready():
-            return
-        print()
-        self.console.info(
-            f"registering {self.console.ORANGE}{len(self.games)}{self.console.WHITE} games as played "
-            f"{self.console.GREY}·{self.console.WHITE} 1m each"
-        )
-        self.console.rule()
-        # launch_game drives the played count; the open/close heartbeats add the minute
-        ok = Spoofer(self.client, self.console).run(
-            self.games,
-            lambda g: self.client.build_session(g, 60 * 1000),
-        )
-        print()
-        self.console.ok("complete", f"{ok}/{len(self.games)} games marked played")
+    def _select_games(self, count: int) -> list[Game]:
+        """select N games, preferring unused ones and rotating through used to avoid repeats."""
+        available_ids = {g.id for g in self.games}
+        unused_ids = [g.id for g in self.games if g.id not in self.state.used_games]
+        used_ids = [gid for gid in self.state.used_games if gid in available_ids]
+
+        # if we have enough unused, take from there
+        if len(unused_ids) >= count:
+            selected_ids = unused_ids[:count]
+        else:
+            # fill with unused, then rotate through used
+            selected_ids = unused_ids
+            if used_ids:
+                remaining = count - len(selected_ids)
+                rotated = used_ids[remaining:] + used_ids[:remaining]
+                selected_ids.extend(rotated[:remaining])
+
+        # track them for next run
+        self.state.used_games = [gid for gid in self.state.used_games if gid not in selected_ids] + selected_ids
+
+        # map back to Game objects
+        id_map = {g.id: g for g in self.games}
+        return [id_map[gid] for gid in selected_ids if gid in id_map]
 
     # menu
 
     def menu(self) -> None:
         C = self.console
         while True:
-            cookie_state = f"{C.GREEN}set{C.RESET}" if self.state.has_cookie else f"{C.RED}unset{C.RESET}"
+            C.clear()
+            C.banner()
+            print()
+            # show stats
+            C.info(f"loaded {C.ORANGE}{len(self.games)}{C.WHITE} games")
+            C.info(f"claimed {C.ORANGE}{self.state.total_games_claimed}{C.WHITE} games · {C.ORANGE}{self.state.total_hours_claimed:,.0f}h{C.WHITE} total")
             C.rule()
-            print(f"  {C.ORANGE}1{C.RESET} {C.WHITE}claim playtime (hours){C.RESET}")
-            print(f"  {C.ORANGE}2{C.RESET} {C.WHITE}games played (count){C.RESET}")
-            print(f"  {C.ORANGE}3{C.RESET} {C.WHITE}refresh auth{C.RESET} {C.GREY}· cookie {cookie_state}{C.RESET}")
-            print(f"  {C.ORANGE}4{C.RESET} {C.WHITE}exit{C.RESET}")
+            C.info(f"{C.ORANGE}1{C.RESET} · claim games")
+            C.info(f"{C.ORANGE}2{C.RESET} · refresh auth")
+            C.info(f"{C.ORANGE}3{C.RESET} · exit")
             C.rule()
-
-            # re-prompt on empty/invalid input without reprinting the options
-            choice = ""
-            while choice not in ("1", "2", "3", "4"):
-                choice = input(f"  {C.ORANGE}›{C.RESET} ").strip()
-
+            choice = input(f"  {C.ORANGE}›{C.RESET} ").strip()
+            print()
             if choice == "1":
-                self.module_playtime()
+                self.claim_games()
             elif choice == "2":
-                self.module_played_count()
-            elif choice == "3":
-                self._refresh(prompt_cookie=True)
-            elif choice == "4":
+                self._refresh()
+            elif choice in ("3", ""):
                 break
+            else:
+                C.warn("input", "invalid option")
 
 
 def main() -> None:
