@@ -211,9 +211,13 @@ def build_super_props(launch_signature: str, heartbeat_session: str) -> str:
     return base64.b64encode(raw).decode("ascii")
 
 
-def _read_analytics_token(auth_token: str) -> str:
+def _read_analytics_token(auth_token: str, super_props: str) -> str:
     # the token that /science actually validates; a plain rest call returns it
-    req = urllib.request.Request(ME_URL, headers={"authorization": auth_token, "user-agent": USER_AGENT})
+    req = urllib.request.Request(ME_URL, headers={
+        "authorization": auth_token,
+        "user-agent": USER_AGENT,
+        "x-super-properties": super_props,
+    })
     try:
         with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read().decode("utf-8"))
@@ -225,11 +229,11 @@ def _read_analytics_token(auth_token: str) -> str:
     return token
 
 
-def ensure_token(state: State) -> None:
+def ensure_token(state: State, super_props: str) -> None:
     """fetch + cache the analytics token if missing or stale."""
     if not state.is_stale:
         return
-    state.analytics_token = _read_analytics_token(state.token)
+    state.analytics_token = _read_analytics_token(state.token, super_props)
     state.fetched_at = int(time.time())
     state.save()
 
@@ -520,15 +524,15 @@ class App:
         # step 5: auth
         print()
         C.info("validating auth...")
+        self._new_session()  # fresh client identity for this run
         try:
-            ensure_token(self.state)
+            ensure_token(self.state, self.session.super_props)          # fetch analytics token if stale
         except Exception as exc:
             C.err("token", str(exc))
             return
         C.ok("auth", "ready")
         time.sleep(0.5)
 
-        self._new_session()
         print()
         self.menu()
 
@@ -571,7 +575,7 @@ class App:
         self.console.info("refreshing analytics token...")
         try:
             self.state.fetched_at = 0          # force a refetch
-            ensure_token(self.state)
+            ensure_token(self.state, self.session.super_props)
         except Exception as exc:
             self.console.err("auth", str(exc))
             return
@@ -586,7 +590,7 @@ class App:
             return False
         if self.state.is_stale:
             try:
-                ensure_token(self.state)
+                ensure_token(self.state, self.session.super_props)
             except Exception as exc:
                 self.console.err("auth", str(exc))
                 return False
