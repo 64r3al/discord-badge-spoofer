@@ -271,19 +271,15 @@ def _download_games() -> str:
     request = urllib.request.Request(GAMES_CDN_URL, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(request, timeout=30) as response:
         raw = response.read().decode("utf-8")
-    GAMES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    GAMES_FILE.write_text(raw, encoding="utf-8")
+    try:
+        GAMES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        GAMES_FILE.write_text(raw, encoding="utf-8")
+    except OSError:
+        pass  # cache is best-effort; a read-only dir shouldn't stop us using the data
     return raw
 
 
-def load_games() -> list[Game]:
-    if GAMES_FILE.exists():
-        raw = GAMES_FILE.read_text(encoding="utf-8")
-    else:
-        try:
-            raw = _download_games()
-        except Exception:
-            return []
+def _parse_games(raw: str) -> list[Game]:
     data = json.loads(raw)
     games: list[Game] = []
     seen: set[str] = set()
@@ -296,6 +292,24 @@ def load_games() -> list[Game]:
         seen.add(gid)
         games.append(Game(gid, entry.get("name", "Unknown"), _win_exe(entry)))
     return games
+
+
+def load_games() -> list[Game]:
+    # prefer the cached file, but re-download if it's missing, empty, or corrupt
+    raw = ""
+    if GAMES_FILE.exists():
+        raw = GAMES_FILE.read_text(encoding="utf-8").strip()
+    if raw:
+        try:
+            games = _parse_games(raw)
+            if games:
+                return games
+        except (json.JSONDecodeError, ValueError):
+            pass  # corrupt cache, fall through to a fresh download
+    try:
+        return _parse_games(_download_games())
+    except Exception:
+        return []
 
 
 class ScienceClient:
@@ -510,7 +524,9 @@ class App:
         time.sleep(0.4)
         self.games = load_games()
         if not self.games:
-            C.err("games", f"not found or empty: {GAMES_FILE}")
+            C.err("games", "couldn't load the game list")
+            C.info(f"tried {GAMES_FILE} and {GAMES_CDN_URL}")
+            C.info("check your connection, or drop a valid games.json at the path above")
             return
         C.ok("games", f"{C.ORANGE}{len(self.games)}{C.WHITE} loaded")
         time.sleep(0.5)
