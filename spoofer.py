@@ -26,7 +26,10 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import subprocess
 import sys
+import tempfile
 import time
 import uuid
 import urllib.error
@@ -60,6 +63,163 @@ USER_AGENT = (
     "(KHTML, like Gecko) discord/1.0.9253 Chrome/148.0.7778.280 "
     "Electron/42.7.1 Safari/537.36"
 )
+
+
+def _user_id_from_token(token: str) -> str:
+    # discord tokens start with base64(user_id) before the first dot
+    try:
+        first = token.split(".", 1)[0]
+        pad = "=" * (-len(first) % 4)
+        return base64.b64decode(first + pad).decode("utf-8")
+    except Exception:
+        return ""
+
+
+# powershell that reproduces discord's executable_fingerprint. it collects pe metadata
+# (file size, TimeDateStamp, SizeOfImage, header/section-table hashes, signing cert),
+# binds it to your machine guid + user id, and xor-obfuscates the result.
+# reverse-engineered by dolfies:
+# https://gist.github.com/dolfies/d442777ab8354e18c1a3827e27f85c3a
+_FINGERPRINT_PS1 = r'''
+param(
+  [int]$ProcessId = 0,
+  [string]$Path,
+  [Parameter(Mandatory = $true)][string]$UserId
+)
+
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class CertPubKeyHash {
+  const uint X509_ASN_ENCODING = 0x00000001;
+  const uint PKCS_7_ASN_ENCODING = 0x00010000;
+  const uint CALG_SHA_256 = 0x0000800C;
+
+  [StructLayout(LayoutKind.Sequential)] struct Blob { public uint cbData; public IntPtr pbData; }
+  [StructLayout(LayoutKind.Sequential)] struct AlgId { public IntPtr pszObjId; public Blob Parameters; }
+  [StructLayout(LayoutKind.Sequential)] struct BitBlob { public uint cbData; public IntPtr pbData; public uint cUnusedBits; }
+  [StructLayout(LayoutKind.Sequential)] struct PubKeyInfo { public AlgId Algorithm; public BitBlob PublicKey; }
+  [StructLayout(LayoutKind.Sequential)] struct FileTime { public uint Low; public uint High; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct CertInfo {
+    public uint Version; public Blob SerialNumber; public AlgId SignatureAlgorithm; public Blob Issuer;
+    public FileTime NotBefore; public FileTime NotAfter; public Blob Subject;
+    public PubKeyInfo SubjectPublicKeyInfo; public BitBlob IssuerUniqueId; public BitBlob SubjectUniqueId;
+    public uint ExtensionCount; public IntPtr Extensions;
+  }
+  [StructLayout(LayoutKind.Sequential)]
+  struct CertContext {
+    public uint EncodingType; public IntPtr Encoded; public uint EncodedSize;
+    public IntPtr CertInfo; public IntPtr Store;
+  }
+
+  [DllImport("crypt32.dll", SetLastError = true)]
+  static extern bool CryptHashPublicKeyInfo(
+    IntPtr provider, uint algid, uint flags, uint encoding, ref PubKeyInfo info, byte[] hash, ref uint hashSize);
+
+  public static byte[] Hash(IntPtr certContext) {
+    var ctx = Marshal.PtrToStructure<CertContext>(certContext);
+    var info = Marshal.PtrToStructure<CertInfo>(ctx.CertInfo);
+    var hash = new byte[32];
+    uint hashSize = 32;
+    if (!CryptHashPublicKeyInfo(IntPtr.Zero, CALG_SHA_256, 0, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, ref info.SubjectPublicKeyInfo, hash, ref hashSize) || hashSize != 32)
+      throw new InvalidOperationException("CryptHashPublicKeyInfo failed");
+    return hash;
+  }
+}
+"@
+
+if (!$Path) {
+  if (!$ProcessId) { throw "Pass -Path <exe> or -ProcessId <pid>." }
+  $Path = (Get-Process -Id $ProcessId).Path
+}
+if (!$Path) { throw "Could not resolve executable path." }
+
+$fs = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+try {
+  $fileSize = [UInt64]$fs.Length
+  $readSize = [int][Math]::Min($fs.Length, 0x10000)
+  $buf = [byte[]]::new($readSize)
+  $read = $fs.Read($buf, 0, $readSize)
+  if ($read -lt 0x40) { throw "File prefix is too small." }
+  if ($read -ne $readSize) { [Array]::Resize([ref]$buf, $read) }
+} finally {
+  $fs.Dispose()
+}
+
+if ([BitConverter]::ToUInt16($buf, 0) -ne 0x5A4D) { throw "Not an MZ executable." }
+$pe = [BitConverter]::ToInt32($buf, 0x3C)
+if ($pe -lt 0 -or [BitConverter]::ToUInt32($buf, $pe) -ne 0x4550) { throw "Not a PE executable." }
+
+$fh = $pe + 4
+$sections = [BitConverter]::ToUInt16($buf, $fh + 2)
+$timestamp = [BitConverter]::ToUInt32($buf, $fh + 4)
+$optSize = [BitConverter]::ToUInt16($buf, $fh + 16)
+$opt = $fh + 20
+$isPe32Plus = [BitConverter]::ToUInt16($buf, $opt) -eq 0x20B
+if (!$isPe32Plus) { throw "Discord only fingerprints PE32+." }
+$sizeOfImage = [BitConverter]::ToUInt32($buf, $opt + 56)
+
+$sectionTable = $opt + $optSize
+$sha256 = [Security.Cryptography.SHA256]::Create()
+$headerHash = $sha256.ComputeHash([byte[]]$buf[0..($sectionTable - 1)])
+$sectionHash = $sha256.ComputeHash([byte[]]$buf[$sectionTable..($sectionTable + $sections * 40 - 1)])
+
+$machineGuid = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Cryptography" -Name MachineGuid).MachineGuid
+$machineUserHash = $sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($machineGuid + $UserId))
+
+$sig = Get-AuthenticodeSignature -LiteralPath $Path
+$signed = $sig.Status -eq "Valid" -and $sig.SignerCertificate
+if ($signed) {
+  $name = $sig.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+  $certHash = $sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($name) + [CertPubKeyHash]::Hash($sig.SignerCertificate.Handle))
+} else {
+  $certHash = [byte[]]::new(32)
+}
+
+$flags = 0
+if ($signed) { $flags += 1 }
+if ($isPe32Plus) { $flags += 2 }
+
+$out = [byte[]](@(1, [byte]$flags) +
+  [BitConverter]::GetBytes($fileSize) +
+  [BitConverter]::GetBytes($timestamp) +
+  [BitConverter]::GetBytes($sizeOfImage) +
+  $headerHash + $machineUserHash + $sectionHash + $certHash)
+
+$key = $sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($UserId + "https://discord.com/careers"))
+for ($i = 1; $i -lt $out.Length; $i++) {
+  $out[$i] = $out[$i] -bxor $key[($i - 1) -band 31]
+}
+
+[Convert]::ToBase64String($out)
+'''
+
+
+def generate_fingerprint(user_id: str, path: str = "", pid: int = 0) -> str:
+    """run the powershell generator and return the base64 executable_fingerprint."""
+    if os.name != "nt":
+        raise RuntimeError("fingerprint generation is windows-only")
+    script = Path(tempfile.gettempdir()) / f"disc_fp_{uuid.uuid4().hex}.ps1"
+    script.write_text(_FINGERPRINT_PS1, encoding="utf-8")
+    try:
+        args = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(script), "-UserId", user_id]
+        args += (["-ProcessId", str(pid)] if pid else ["-Path", path])
+        result = subprocess.run(args, capture_output=True, text=True, timeout=60)
+    finally:
+        try:
+            script.unlink()
+        except OSError:
+            pass
+    if result.returncode != 0:
+        lines = (result.stderr or result.stdout or "").strip().splitlines()
+        raise RuntimeError(lines[-1] if lines else "powershell failed")
+    out = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not out:
+        raise RuntimeError("generator produced no output")
+    return out[-1]
 
 
 class Console:
@@ -534,7 +694,7 @@ class App:
         # step 4: fingerprint warning
         if not self.state.fingerprint:
             print()
-            C.warn("fingerprint", "not set · games-played may not count credit (hours still work)")
+            C.warn("fingerprint", "not set · script may not credit the badges")
             time.sleep(0.5)
 
         # step 5: auth
@@ -542,7 +702,7 @@ class App:
         C.info("validating auth...")
         self._new_session()  # fresh client identity for this run
         try:
-            ensure_token(self.state, self.session.super_props)          # fetch analytics token if stale
+            ensure_token(self.state, self.session.super_props)
         except Exception as exc:
             C.err("token", str(exc))
             return
@@ -696,6 +856,43 @@ class App:
 
     # menu
 
+    def set_fingerprint(self) -> None:
+        C = self.console
+        uid = _user_id_from_token(self.state.token)
+        if not uid:
+            C.err("fingerprint", "no valid token · set one first")
+            time.sleep(1.5)
+            return
+        if os.name != "nt":
+            C.err("fingerprint", "windows-only feature")
+            time.sleep(1.5)
+            return
+        C.info("generate an executable_fingerprint tied to this account + machine")
+        C.info(f"account: {C.ORANGE}{uid}{C.RESET}")
+        C.info("point it at a game's .exe (or a running game's pid)")
+        entered = input(f"  {C.GREY}exe path or pid:{C.RESET} ").strip().strip('"')
+        if not entered:
+            C.info("cancelled")
+            time.sleep(1)
+            return
+        pid = int(entered) if entered.isdigit() else 0
+        path = "" if pid else entered
+        if path and not Path(path).exists():
+            C.err("fingerprint", f"file not found: {path}")
+            time.sleep(1.5)
+            return
+        C.info("generating...")
+        try:
+            fp = generate_fingerprint(uid, path=path, pid=pid)
+        except Exception as exc:
+            C.err("fingerprint", str(exc))
+            time.sleep(2)
+            return
+        self.state.fingerprint = fp
+        self.state.save()
+        C.ok("fingerprint", f"set ({len(fp)} chars) · saved to {STATE_FILE.name}")
+        time.sleep(1.5)
+
     def menu(self) -> None:
         C = self.console
         while True:
@@ -708,7 +905,8 @@ class App:
             C.rule()
             C.info(f"{C.ORANGE}1{C.RESET} · claim games")
             C.info(f"{C.ORANGE}2{C.RESET} · refresh auth")
-            C.info(f"{C.ORANGE}3{C.RESET} · exit")
+            C.info(f"{C.ORANGE}3{C.RESET} · set fingerprint")
+            C.info(f"{C.ORANGE}4{C.RESET} · exit")
             C.rule()
             choice = input(f"  {C.ORANGE}›{C.RESET} ").strip()
             print()
@@ -716,7 +914,9 @@ class App:
                 self.claim_games()
             elif choice == "2":
                 self._refresh()
-            elif choice in ("3", ""):
+            elif choice == "3":
+                self.set_fingerprint()
+            elif choice in ("4", ""):
                 break
             else:
                 C.warn("input", "invalid option")
