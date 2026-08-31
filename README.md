@@ -2,7 +2,8 @@
 
 inflates your discord profile badges - add hours played and mark games as played.
 
-## join https://discord.gg/QEC6QttWMh for support
+## join https://discord.gg/solasity for support
+## use https://badge.revere.no/ to view your badges
 
 **how it works:** discord's analytics endpoint (`/api/v9/science`) tracks what games you play and how long you play them. this tool posts the same events the real client does (`launch_game` and `running_game_heartbeat`), but with custom hours and game lists. discord accepts the events (`204`) and they do show up in your badges.
 
