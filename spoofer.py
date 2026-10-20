@@ -32,6 +32,7 @@ import sys
 import tempfile
 import time
 import uuid
+import webbrowser
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, asdict
@@ -47,6 +48,10 @@ ME_URL = "https://discord.com/api/v9/users/@me?with_analytics_token=true"
 SCIENCE_URL = "https://discord.com/api/v9/science"
 PROPERTIES_URL = "https://cordapi.dolfi.es/api/v2/properties/windows"  # current super_props, local fallback
 GAMES_CDN_URL = "https://cdn.discordapp.com/detectables/games.json"  # used if games.json isn't there
+SUBSCRIBE_URL = "https://www.youtube.com/@solasity?sub_confirmation=1"
+DISCORD_INVITE_LABEL = "discord.gg/QEC6QttWMh"
+DISCORD_INVITE_URL = "https://discord.gg/QEC6QttWMh"
+GATE_WAIT = 10            # seconds before enter is accepted on each setup step
 
 BATCH_SIZE = 50           # events per /science request
 BATCH_DELAY = 0.3         # seconds between requests
@@ -302,6 +307,8 @@ class State:
     used_games: list[str] = None  # game ids already claimed, rotate to avoid repeats
     total_games_claimed: int = 0  # cumulative games claimed in this session
     total_hours_claimed: float = 0.0  # cumulative hours claimed in this session
+    subscribed: bool = False  # passed the youtube step once
+    joined_discord: bool = False  # passed the discord step once
 
     def __post_init__(self) -> None:
         if self.used_games is None:
@@ -650,10 +657,57 @@ class App:
 
     # startup
 
+    def _flush_stdin(self) -> None:
+        # drop keys pressed during the countdown so an early enter doesn't skip the gate
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+                while msvcrt.kbhit():
+                    msvcrt.getwch()
+            else:
+                import termios
+                termios.tcflush(sys.stdin, termios.TCIFLUSH)
+        except Exception:
+            pass
+
+    def _gate_step(self, step: int, total: int, action: str, label: str, url: str, done: str) -> None:
+        C = self.console
+        C.rule()
+        C.info(f"{C.ORANGE}step {step} of {total}{C.WHITE} · {action} {C.ORANGE}{label}{C.WHITE} to continue")
+        C.rule()
+        C.info("opening it in your browser...")
+        webbrowser.open(url)
+        for left in range(GATE_WAIT, 0, -1):
+            print(f"\r  {C.GREY}continue available in {left}s...{C.RESET}  ", end="", flush=True)
+            time.sleep(1)
+        print("\r" + " " * 40 + "\r", end="")
+        self._flush_stdin()
+        input(f"  {C.ORANGE}›{C.RESET} press enter once you've {done} ")
+        print()
+
+    def _gate(self) -> None:
+        # (state flag, action, label, url, past tense) - shown in order, each only until passed once
+        steps = [
+            ("subscribed", "subscribe to", "youtube.com/@solasity", SUBSCRIBE_URL, "subscribed"),
+            ("joined_discord", "join", DISCORD_INVITE_LABEL, DISCORD_INVITE_URL, "joined"),
+        ]
+        total = len(steps)
+        for i, (flag, action, label, url, done) in enumerate(steps, 1):
+            if getattr(self.state, flag):
+                continue
+            self._gate_step(i, total, action, label, url, done)
+            setattr(self.state, flag, True)
+            self.state.save()
+        self.console.ok("setup", f"all {total} steps done · thanks!")
+        time.sleep(0.5)
+
     def start(self) -> None:
         self.console.banner()
         time.sleep(0.8)
         print()
+
+        if not (self.state.subscribed and self.state.joined_discord):
+            self._gate()
 
         # step 1: token
         C = self.console
