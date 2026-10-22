@@ -21,8 +21,13 @@ if not exist ".venv\Scripts\python.exe" (
         py -3 -m venv ".venv"
     ) else (
         where python >nul 2>&1
-        if errorlevel 1 goto :no_python
-        python -m venv ".venv"
+        if not errorlevel 1 (
+            python -m venv ".venv"
+        ) else (
+            call :find_python
+            if errorlevel 1 goto :no_python
+            "%BOOTSTRAP_PY%" -m venv ".venv"
+        )
     )
     if errorlevel 1 goto :venv_failed
 )
@@ -93,4 +98,15 @@ goto :stop_error
 :stop_error
 echo.
 pause
+exit /b 1
+
+:find_python
+if defined LOCALAPPDATA (
+    for %%V in (313 312 311 310) do (
+        if exist "%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe" (
+            set "BOOTSTRAP_PY=%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe"
+            exit /b 0
+        )
+    )
+)
 exit /b 1
