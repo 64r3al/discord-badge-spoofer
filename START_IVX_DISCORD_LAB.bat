@@ -26,7 +26,8 @@ if not exist ".venv\Scripts\python.exe" (
         ) else (
             call :find_python
             if errorlevel 1 goto :no_python
-            "%BOOTSTRAP_PY%" -m venv ".venv"
+            call :create_venv
+            if errorlevel 1 goto :venv_failed
         )
     )
     if errorlevel 1 goto :venv_failed
@@ -110,3 +111,8 @@ if defined LOCALAPPDATA (
     )
 )
 exit /b 1
+
+:create_venv
+"%BOOTSTRAP_PY%" -m venv ".venv"
+if errorlevel 1 exit /b 1
+exit /b 0
