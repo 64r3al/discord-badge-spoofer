@@ -14,6 +14,7 @@ Save a metadata-only report if useful:
 
 ```powershell
 python session_inventory.py --json session_inventory_report.json
+python session_inventory.py --csv session_inventory_report.csv
 ```
 
 ## What it reports
