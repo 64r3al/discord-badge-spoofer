@@ -22,6 +22,7 @@ The repository also retains a separate legacy experimental script, `spoofer.py`,
 
 The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigation, inventory cards, a searchable profile table, subtle fade transitions, and local export dialogs.
 
+![Tests](https://github.com/64r3al/discord-badge-spoofer/actions/workflows/tests.yml/badge.svg)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![PySide6](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt%206-41CD52?style=flat-square&logo=qt&logoColor=white)
 ![Privacy](https://img.shields.io/badge/Privacy-Local--only-16A34A?style=flat-square)
