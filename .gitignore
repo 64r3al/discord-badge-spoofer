@@ -8,3 +8,13 @@ __pycache__/
 
 # game cache
 data/
+
+# Virtual environments and local exports
+.venv/
+venv/
+.env
+*.log
+ivx_profile_inventory.csv
+ivx_profile_inventory.json
+session_inventory_report.csv
+session_inventory_report.json
