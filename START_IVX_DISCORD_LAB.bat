@@ -102,7 +102,7 @@ exit /b 1
 
 :find_python
 if defined LOCALAPPDATA (
-    for %%V in (313 312 311 310) do (
+    for %%V in (314 313 312 311 310) do (
         if exist "%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe" (
             set "BOOTSTRAP_PY=%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe"
             exit /b 0
