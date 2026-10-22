@@ -52,28 +52,32 @@ The scan tells you whether standard folders exist. It does **not** establish tha
 - Python 3.10 or newer
 - PySide6, installed from the version range in `requirements.txt`
 
-### Setup
+### One-click launch on Windows (recommended)
 
-1. Download or clone this repository.
-2. Open a terminal in the project folder.
-3. Create and activate a virtual environment (recommended):
+1. Download the repository using **Code → Download ZIP**, then extract the ZIP completely. Do not run the launcher from inside the ZIP preview or a temporary archive folder.
+2. Open the extracted `discord-badge-spoofer` folder.
+3. Double-click **`START_IVX_DISCORD_LAB.bat`**.
 
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   ```
+The launcher will:
 
-4. Install the desktop dependency:
+- find Python 3.10 or newer;
+- create a project-local `.venv` folder on first launch;
+- install `requirements.txt` if PySide6 is not installed in that environment;
+- open the IVX Discord Lab desktop UI;
+- keep the console open if setup or launch fails so the error can be read.
 
-   ```powershell
-   python -m pip install -r requirements.txt
-   ```
+The launcher runs `app.py` only. It does **not** launch `spoofer.py`. Keep the launcher and the project files together in the extracted project folder.
 
-5. Launch the desktop app:
+### Manual setup
 
-   ```powershell
-   python app.py
-   ```
+If you prefer to start it yourself, open a terminal in the project folder:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python app.py
+```
 
 ### Command-line inventory (optional)
 
