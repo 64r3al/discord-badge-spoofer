@@ -1,62 +1,146 @@
-# discord-badge-spoofer
+# IVX Discord Lab
 
-inflates your discord profile badges - add hours played and mark games as played.
+<div align="center">
 
-## join https://discord.gg/solasity for support
+**A modern desktop companion for local Discord and browser profile inventory**
 
-**how it works:** discord's analytics endpoint (`/api/v9/science`) tracks what games you play and how long you play them. this tool posts the same events the real client does (`launch_game` and `running_game_heartbeat`), but with custom hours and game lists. discord accepts the events (`204`) and they do show up in your badges.
+[Desktop UI](#desktop-app) · [Features](#features) · [Installation](#installation) · [Privacy](#privacy--security) · [Project structure](#project-structure)
 
-**status:** verified working and currently unpatched. badges take 1-2 days to update, so don't expect results right away. your token and cookie are stored locally only - nothing leaves your machine. this may break at any time if discord patches the endpoint.
+</div>
 
-**important:** this violates discord's tos. use it on accounts you're comfortable losing.
+---
 
-## setup
+## Overview
 
-no dependencies - pure python stdlib (needs python 3.10+).
+IVX Discord Lab is a Python project with a modern **PySide6 / Qt 6 desktop interface** for inspecting the presence of standard Discord client folders and supported browser profile directories. It exports a metadata-only inventory as CSV or JSON.
 
-1. run it:
+The repository also retains a separate legacy experimental script, `spoofer.py`, that constructs synthetic game-activity analytics events. That script is **not launched or controlled by the desktop interface**. Its operation against Discord's undocumented endpoints is unverified against the live service, may violate Discord's Terms of Service, and cannot guarantee Game Time or Game Variety badge progress.
+
+> **Privacy by design:** the desktop app does not read, decrypt, display, or export Discord tokens, browser cookies, saved passwords, browser login databases, or local-storage contents. It does not send reports to webhooks or upload them to a server.
+
+## Desktop app
+
+The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigation, inventory cards, a searchable profile table, subtle fade transitions, and local export dialogs.
+
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)
+![PySide6](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt%206-41CD52?style=flat-square&logo=qt&logoColor=white)
+![Privacy](https://img.shields.io/badge/Privacy-Local--only-16A34A?style=flat-square)
+![License](https://img.shields.io/badge/License-MIT-8B5CF6?style=flat-square)
+
+### Features
+
+- **Overview dashboard** — counts detected Discord clients, browser profiles, and storage-folder presence.
+- **Discord client detection** — checks the standard user-data paths for Stable, PTB, and Canary.
+- **Browser profile inventory** — lists supported Chrome, Edge, Brave, Vivaldi, Firefox, and Opera profile folders in standard locations.
+- **Search and filter** — find entries by type, application, profile label, or home-relative path.
+- **CSV export** — create a spreadsheet-friendly metadata report.
+- **JSON export** — save the full metadata report, including its limitations.
+- **Subtle UI animation** — Qt property animations provide short, reduced-complexity page transitions.
+- **Lightweight inventory** — the scanning module uses only the Python standard library.
+- **Clear separation** — the desktop interface never invokes `spoofer.py`.
+
+### What the scan can tell you
+
+The scan tells you whether standard folders exist. It does **not** establish that a user is currently signed in, identify an account username, validate a session, or prove that a session is active.
+
+## Installation
+
+### Requirements
+
+- Windows 10 or 11 (the inventory module also supports common macOS and Linux profile paths)
+- Python 3.10 or newer
+- PySide6, installed from the version range in `requirements.txt`
+
+### Setup
+
+1. Download or clone this repository.
+2. Open a terminal in the project folder.
+3. Create and activate a virtual environment (recommended):
+
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
    ```
-   python spoofer.py
+
+4. Install the desktop dependency:
+
+   ```powershell
+   python -m pip install -r requirements.txt
    ```
 
-2. first run asks for your discord account token. paste it and it gets saved to `science_state.json` (reused after that). the analytics token is fetched automatically from `GET /users/@me?with_analytics_token=true`.
+5. Launch the desktop app:
 
-3. you also need a cookie (`cf_clearance`). on startup it'll ask for one, or you can add/update it later via option `3` (refresh auth). grab the full `cookie` header from any `/science` request in devtools (network tab). it gets saved to `science_state.json`.
+   ```powershell
+   python app.py
+   ```
 
-5. **optional: fingerprint for games-played count.** the fingerprint isn't strictly necessary - users have reported getting the games-played badge without setting one. if you want to set it, grab a real `executable_fingerprint` from a `launch_game` request in your client's devtools and add it to `science_state.json` as `"fingerprint": "..."`.
+### Command-line inventory (optional)
 
-## menu
+You can also run the inventory utility without opening the UI:
 
-- `1` claim playtime - asks for hours per game, applies to every game
-- `2` games played - marks every game as played (1 minute each)
-- `3` refresh auth - pulls a fresh analytics token and lets you update the cookie
-- `4` exit
-
-## how auth works
-
-- `token` - your account token, entered on first run, saved to `science_state.json`
-- `analytics_token` - fetched from `GET /users/@me?with_analytics_token=true`
-- `super_props` / heartbeat / launch ids - generated automatically
-- `cookie` (cf_clearance) - pasted by hand, via option `3`
-- `fingerprint` - optional, only needed for the games-played count (see below)
-
-badges update on discord's analytics cycle (1-2 days), so don't expect to see results right away.
-
-## about the fingerprint
-
-hours work with just your token and cookie. the games-played count might need a real `executable_fingerprint` - we're not 100% sure yet. users have reported getting badges without one, so try it first. if it doesn't work after a few days, grab a real `executable_fingerprint` from a `launch_game` request in your client's devtools and add it to `science_state.json`:
-
-```json
-{ "fingerprint": "Ab5ekw..." }
+```powershell
+python session_inventory.py
+python session_inventory.py --csv ivx_profile_inventory.csv
+python session_inventory.py --json ivx_profile_inventory.json
 ```
 
-either way, the tool will post the events - we just want feedback on whether the badges move with or without the fingerprint so we can figure out what's actually required.
+## Export formats
 
-## disclaimer
+### CSV
 
-this breaks discord's terms of service. use it on accounts you're fine losing.
-provided as-is with no warranty.
+The CSV contains rows for Discord client installations and browser profiles, including type, application, profile label, storage-folder presence, and a path relative to the home directory when possible.
 
-## license
+### JSON
 
-released under the mit license. see [LICENSE](LICENSE).
+The JSON contains the inventory, a metadata-only warning, and a limitations list.
+
+Both formats exclude tokens, cookies, saved passwords, browser database contents, and account usernames.
+
+## Privacy & security
+
+- Inventory is performed locally.
+- The user chooses the export destination in a Save dialog.
+- No webhook, telemetry upload, or background report upload is configured in the desktop app.
+- Credential stores, browser login databases, cookie databases, and local-storage contents are not opened.
+- The scan does not modify Discord installations or profile directories.
+- Paths are home-relative where possible; exported files remain under the user's control.
+
+Do not commit personal inventory reports or credential-bearing files to GitHub. Keep `science_state.json`, local caches, Python environments, and generated reports out of version control.
+
+## Project structure
+
+| File | Purpose |
+|---|---|
+| `app.py` | PySide6 desktop UI: dashboard, searchable inventory, animations, exports |
+| `session_inventory.py` | Metadata-only local profile inventory |
+| `tests/test_session_inventory.py` | Unit tests using temporary test directories |
+| `spoofer.py` | Separate legacy experimental telemetry script; not integrated into the desktop UI |
+| `SAFE_INVENTORY.md` | Command-line inventory notes |
+| `ROADMAP.md` | Security-first development roadmap |
+| `requirements.txt` | Desktop UI dependency |
+| `LICENSE` | MIT license and retained upstream notice |
+
+## Testing
+
+Run the inventory tests from the repository root:
+
+```powershell
+python -m unittest discover -s tests -v
+python -m py_compile app.py session_inventory.py tests/test_session_inventory.py
+```
+
+These tests use temporary directories and do not open real user credential stores or send network requests.
+
+To run the Qt UI, use a desktop session with PySide6 installed. The scan checks folder metadata only.
+
+## Experimental badge script
+
+The separate `spoofer.py` script submits fabricated activity telemetry to undocumented Discord endpoints. It is not part of the desktop inventory workflow. Its behavior has not been verified against Discord's live badge-processing system, and an accepted HTTP request does not prove badge progress changed.
+
+Automated or fabricated telemetry may violate Discord's Terms of Service and can put an account at risk. No badge progress or account outcome is promised.
+
+## Attribution and license
+
+This repository retains the original MIT license and its required copyright notice. The legacy `spoofer.py` component originated from the MIT-licensed [revere-group/discord-badge-spoofer](https://github.com/revere-group/discord-badge-spoofer) project; see `LICENSE` for the retained notice. The IVX desktop interface and metadata-only inventory are maintained separately.
+
+This project is not affiliated with or endorsed by Discord.
