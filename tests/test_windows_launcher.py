@@ -24,6 +24,8 @@ class WindowsLauncherContractTests(unittest.TestCase):
         self.assertIn(':no_python', self.launcher)
         self.assertIn(':install_failed', self.launcher)
         self.assertIn('https://www.python.org/downloads/windows/', self.launcher)
+        self.assertIn(':create_venv', self.launcher)
+        self.assertIn('call :create_venv', self.launcher)
 
 
 if __name__ == "__main__":
