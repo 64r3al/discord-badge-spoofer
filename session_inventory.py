@@ -7,6 +7,7 @@ It does not read/decrypt tokens, cookies, browser databases, or Local Storage fi
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import platform
@@ -137,11 +138,48 @@ def build_inventory(home: Path | None = None, env: Mapping[str, str] | None = No
     }
 
 
+def write_csv_report(report: dict, target: Path) -> None:
+    """Write only profile metadata to CSV; never include tokens or cookies."""
+    fieldnames = [
+        "kind",
+        "application",
+        "profile",
+        "profile_folder_found",
+        "user_data_found",
+        "local_storage_folder_found",
+        "path",
+    ]
+    with target.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for item in report["discord_clients"]:
+            writer.writerow({
+                "kind": "discord_client",
+                "application": item["client"],
+                "profile": "",
+                "profile_folder_found": "",
+                "user_data_found": item["user_data_found"],
+                "local_storage_folder_found": item["local_storage_folder_found"],
+                "path": item["path"],
+            })
+        for item in report["browser_profiles"]:
+            writer.writerow({
+                "kind": "browser_profile",
+                "application": item["browser"],
+                "profile": item["profile"],
+                "profile_folder_found": item["profile_folder_found"],
+                "user_data_found": "",
+                "local_storage_folder_found": item["local_storage_folder_found"],
+                "path": item["path"],
+            })
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="List Discord installations and browser profile folders without collecting credentials."
     )
-    parser.add_argument("--json", dest="json_path", metavar="FILE", help="write the metadata-only inventory report to FILE")
+    parser.add_argument("--json", dest="json_path", metavar="FILE", help="write the metadata-only inventory report to JSON FILE")
+    parser.add_argument("--csv", dest="csv_path", metavar="FILE", help="write a metadata-only inventory table to CSV FILE")
     args = parser.parse_args(argv)
 
     report = build_inventory()
@@ -167,7 +205,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         except OSError as exc:
             print(f"\nCould not write report: {exc}")
             return 1
-        print(f"\nMetadata-only report saved to: {target}")
+        print(f"\nMetadata-only JSON report saved to: {target}")
+
+    if args.csv_path:
+        target = Path(args.csv_path).expanduser()
+        try:
+            write_csv_report(report, target)
+        except OSError as exc:
+            print(f"\nCould not write CSV report: {exc}")
+            return 1
+        print(f"\nMetadata-only CSV report saved to: {target}")
+
     print("\nNo token values or cookies were collected or exported.")
     return 0
 
