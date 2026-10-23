@@ -32,6 +32,15 @@ class DesktopAppSmokeTests(unittest.TestCase):
         self.assertIn("no fake activity", label_text.casefold())
         window.close()
 
+    def test_readiness_check_waits_for_initial_scan(self):
+        window = MainWindow()
+        window.scan_completed = False
+        with patch("app.QMessageBox.information") as information:
+            window.run_badge_readiness_check()
+        information.assert_called_once()
+        self.assertIn("has not completed successfully", information.call_args.args[2])
+        window.close()
+
     def test_windows_process_check_detects_discord_stable_and_ptb(self):
         output = (
             '"Discord.exe","1234","Console","1","60,000 K"\r\n'
