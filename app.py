@@ -76,7 +76,6 @@ QLabel#muted { color: #9199ad; }
 QLabel#statusPill { background:#111925; border:1px solid #283248; border-radius:9px; padding:6px 9px; }
 QLabel#catalogStatus { color:#9da8be; font-size:11px; }
 QLabel#tinyLabel { color: #858da2; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; }
-QLabel#tinyLabel { color: #858da2; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; }
 QLabel#metricValue { font-size: 29px; font-weight: 800; color: #f9fafb; }
 QLabel#metricLabel { color: #929bb0; font-size: 12px; }
 QFrame#card {
@@ -109,7 +108,7 @@ QPushButton {
 }
 QPushButton:hover { background: #222a3b; border-color: #4b5872; }
 QPushButton:pressed { background: #151a25; padding-top: 11px; padding-bottom: 9px; }
-QPushButton:focus-visible { border: 1px solid #9c88ff; }
+QPushButton:focus { border: 1px solid #9c88ff; }
 QPushButton#navButton { margin: 1px 0; border-radius: 10px; }
 QPushButton#navButton[selected="true"] { padding-left: 14px; }
 QPushButton#navButton:pressed { padding-top: 12px; padding-bottom: 12px; }
