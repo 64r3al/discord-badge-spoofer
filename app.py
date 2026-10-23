@@ -14,7 +14,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QThread, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QPropertyAnimation,
+    QRect,
+    QThread,
+    Qt,
+    QTimer,
+    QUrl,
+    QVariantAnimation,
+    Signal,
+)
 from PySide6.QtGui import QColor, QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QApplication,
@@ -48,7 +58,7 @@ from session_inventory import build_inventory, write_csv_report
 
 
 APP_NAME = "IVX Discord Lab"
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.4.0"
 
 STYLESHEET = """
 QMainWindow, QWidget#appRoot { background: #0a0c11; color: #e7eaf2; }
@@ -61,13 +71,29 @@ QLabel#brandMark {
 QLabel#brandName { font-size: 16px; font-weight: 800; letter-spacing: 1px; color: #f9fafb; }
 QLabel#brandSub { color: #858da2; font-size: 10px; letter-spacing: 1.4px; }
 QLabel#pageTitle { font-size: 25px; font-weight: 750; color: #f6f7fb; }
-QLabel#pageSubtitle { color: #8e97aa; font-size: 12px; }
+QLabel#pageSubtitle { color: #9aa4ba; font-size: 12px; }
 QLabel#muted { color: #9199ad; }
+QLabel#statusPill { background:#111925; border:1px solid #283248; border-radius:9px; padding:6px 9px; }
+QLabel#catalogStatus { color:#9da8be; font-size:11px; }
+QLabel#tinyLabel { color: #858da2; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; }
 QLabel#tinyLabel { color: #858da2; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; }
 QLabel#metricValue { font-size: 29px; font-weight: 800; color: #f9fafb; }
 QLabel#metricLabel { color: #929bb0; font-size: 12px; }
 QFrame#card {
     background: #11151e; border: 1px solid #242a38; border-radius: 16px;
+}
+QFrame#card:hover {
+    background: #131925; border-color: #39435b;
+}
+QFrame#navIndicator {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #b7a5ff,stop:1 #7461f0);
+    border: none; border-radius: 2px;
+}
+QFrame#pageSweep {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 rgba(139,92,246,0), stop:0.35 #7c6ef0,
+        stop:0.5 #ffffff, stop:0.65 #9c88ff, stop:1 rgba(139,92,246,0));
+    border: none;
 }
 QFrame#hero {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #17182b,stop:0.58 #151a2b,stop:1 #10202c);
@@ -82,7 +108,11 @@ QPushButton {
     border-radius: 9px; padding: 10px 14px; font-weight: 650;
 }
 QPushButton:hover { background: #222a3b; border-color: #4b5872; }
-QPushButton:pressed { background: #151a25; }
+QPushButton:pressed { background: #151a25; padding-top: 11px; padding-bottom: 9px; }
+QPushButton:focus-visible { border: 1px solid #9c88ff; }
+QPushButton#navButton { margin: 1px 0; border-radius: 10px; }
+QPushButton#navButton[selected="true"] { padding-left: 14px; }
+QPushButton#navButton:pressed { padding-top: 12px; padding-bottom: 12px; }
 QPushButton:disabled { color: #646d80; background: #141820; border-color: #222633; }
 QPushButton#primaryButton {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #8b5cf6,stop:1 #6366f1);
@@ -107,7 +137,26 @@ QLineEdit {
     background: #0d1119; color: #e8ebf4; border: 1px solid #2a3242;
     border-radius: 10px; padding: 11px 13px; selection-background-color: #6850bb;
 }
-QLineEdit:focus { border-color: #8b5cf6; }
+QLineEdit:focus { border-color: #8b5cf6; background:#101522; }
+QComboBox, QSpinBox {
+    background:#0d1119; color:#e8ebf4; border:1px solid #2a3242;
+    border-radius:9px; padding:9px 11px; min-height:18px;
+}
+QComboBox:hover, QSpinBox:hover { border-color:#454f68; }
+QComboBox:focus, QSpinBox:focus { border-color:#8b5cf6; }
+QComboBox QAbstractItemView {
+    background:#111722; color:#e8ebf4; border:1px solid #343c50;
+    selection-background-color:#282443; selection-color:#ffffff;
+}
+QListWidget {
+    background:#0d1119; color:#dce2ef; border:1px solid #272f40;
+    border-radius:11px; outline:none; padding:5px;
+}
+QListWidget::item { padding:8px 9px; border-radius:7px; border-bottom:1px solid #1a202c; }
+QListWidget::item:hover { background:#171e2d; }
+QListWidget::item:selected { background:#24213c; color:#eeeaff; border:1px solid #494171; }
+QListWidget::indicator { width:14px; height:14px; }
+QTableWidget::item:hover { background:#1a2030; }
 QTableWidget {
     background: #10141c; alternate-background-color: #121823;
     border: 1px solid #252c3a; border-radius: 12px; gridline-color: #252c3a;
@@ -191,6 +240,8 @@ class MetricCard(QFrame):
     def __init__(self, label: str, value: str = "—", accent: str = "#8b5cf6") -> None:
         super().__init__()
         self.setObjectName("card")
+        self._numeric_value = 0
+        self._count_animation: QVariantAnimation | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 17, 18, 17)
         layout.setSpacing(8)
@@ -206,6 +257,29 @@ class MetricCard(QFrame):
 
     def set_value(self, value: str | int) -> None:
         self.value_label.setText(str(value))
+        try:
+            self._numeric_value = int(value)
+        except (TypeError, ValueError):
+            pass
+
+    def animate_value(self, value: int, *, suffix: str = "") -> None:
+        target = max(0, int(value))
+        if self._count_animation is not None:
+            self._count_animation.stop()
+        animation = QVariantAnimation(self)
+        animation.setDuration(680)
+        animation.setStartValue(self._numeric_value)
+        animation.setEndValue(target)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.valueChanged.connect(
+            lambda current: self.value_label.setText(f"{int(current)}{suffix}")
+        )
+        def finish() -> None:
+            self._numeric_value = target
+            self.value_label.setText(f"{target}{suffix}")
+        animation.finished.connect(finish)
+        self._count_animation = animation
+        animation.start()
 
 
 class GameCatalogWorker(QThread):
@@ -242,6 +316,17 @@ class MainWindow(QMainWindow):
         }
         self.profile_rows: list[dict[str, str]] = []
         self.nav_buttons: list[QPushButton] = []
+        self.nav_indicator_animation: QPropertyAnimation | None = None
+        self.page_sweep_animation: QPropertyAnimation | None = None
+        self.scan_spinner_frames = ("◴", "◷", "◶", "◵")
+        self.scan_spinner_index = 0
+        self.scan_spinner_timer = QTimer(self)
+        self.scan_spinner_timer.setInterval(95)
+        self.scan_spinner_timer.timeout.connect(self._animate_scan_spinner)
+        self.catalog_spinner_index = 0
+        self.catalog_spinner_timer = QTimer(self)
+        self.catalog_spinner_timer.setInterval(150)
+        self.catalog_spinner_timer.timeout.connect(self._animate_catalog_loading)
         self.activity_catalog: list[dict[str, str]] = [dict(game) for game in FALLBACK_GAMES]
         self.activity_catalog_by_id: dict[str, dict[str, str]] = {
             game["id"]: game for game in self.activity_catalog
@@ -284,10 +369,16 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self._scroll_page(self._build_exports_page()))
         self.pages.addWidget(self._scroll_page(self._build_about_page()))
         content_layout.addWidget(self.pages, 1)
+        self.page_sweep = QFrame(self.pages)
+        self.page_sweep.setObjectName("pageSweep")
+        self.page_sweep.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.page_sweep.setGeometry(-220, 1, 220, 3)
+        self.page_sweep.hide()
         content_layout.addWidget(self._build_footer())
         root_layout.addWidget(content, 1)
 
         self._animate_count = 0
+        QTimer.singleShot(0, self._position_nav_indicator)
         QTimer.singleShot(120, self.refresh_inventory)
         if self.auto_fetch_catalog:
             QTimer.singleShot(450, self.fetch_activity_catalog)
@@ -332,6 +423,12 @@ class MainWindow(QMainWindow):
             button.clicked.connect(lambda checked=False, page=index: self.navigate(page))
             self.nav_buttons.append(button)
             layout.addWidget(button)
+
+        self.nav_indicator = QFrame(sidebar)
+        self.nav_indicator.setObjectName("navIndicator")
+        self.nav_indicator.setFixedWidth(3)
+        self.nav_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.nav_indicator.raise_()
 
         layout.addStretch(1)
         local_card = QFrame()
@@ -381,6 +478,9 @@ class MainWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { background:#0a0c11; border:none; }")
+        scroll.viewport().setStyleSheet("background:#0a0c11;")
+        widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         scroll.setWidget(widget)
         return scroll
 
@@ -747,7 +847,7 @@ class MainWindow(QMainWindow):
 
         self.activity_catalog_status = make_label(
             "Built-in fallback · 8 examples. Fetching Discord's public catalog on startup…",
-            "sectionHint",
+            "catalogStatus",
         )
         select_layout.addWidget(self.activity_catalog_status)
         self.activity_game_search = QLineEdit()
@@ -880,8 +980,10 @@ class MainWindow(QMainWindow):
             self._append_activity_log("Catalog refresh is already running.")
             return
         self.activity_refresh_catalog_button.setEnabled(False)
-        self.activity_catalog_status.setText("Fetching public game catalog… the UI remains responsive.")
+        self.activity_catalog_status.setText("Fetching public game catalog · UI remains responsive")
         self._append_activity_log("Fetching public detectable-game metadata. No credentials are sent.")
+        self.catalog_spinner_index = 0
+        self.catalog_spinner_timer.start()
         worker = GameCatalogWorker()
         self.activity_catalog_worker = worker
         _ACTIVE_CATALOG_WORKERS.add(worker)
@@ -895,6 +997,7 @@ class MainWindow(QMainWindow):
             self.activity_catalog_worker = None
 
     def _apply_activity_catalog(self, games: object, source: str, message: str) -> None:
+        self.catalog_spinner_timer.stop()
         if not isinstance(games, list):
             games = []
         valid_games = [
@@ -1230,6 +1333,8 @@ class MainWindow(QMainWindow):
             button.setProperty("selected", i == index)
             button.style().unpolish(button)
             button.style().polish(button)
+        self._animate_nav_indicator(index)
+        self._animate_page_sweep()
         titles = [
             ("Overview", "A clear view of detected local profiles."),
             ("Local profiles", "Search and inspect profile-folder metadata."),
@@ -1241,17 +1346,73 @@ class MainWindow(QMainWindow):
         self.page_title.setText(titles[index][0])
         self.page_subtitle.setText(titles[index][1])
 
-        # Keep the stacked pages fully opaque. Applying a persistent graphics-opacity
-        # effect to each scroll page can leave stale backing-store images on some Qt builds,
-        # which makes old pages appear layered behind the selected page.
+        # Animate only independent overlay widgets; never apply an opacity effect to
+        # the stacked page widgets (that caused stale backing-store ghosting before).
         self.pages.currentWidget().update()
         self.pages.update()
+
+    def _position_nav_indicator(self) -> None:
+        if not self.nav_buttons or not hasattr(self, "nav_indicator"):
+            return
+        button = self.nav_buttons[self.pages.currentIndex()]
+        self.nav_indicator.setGeometry(button.x() + 2, button.y() + 9, 3, max(18, button.height() - 18))
+        self.nav_indicator.raise_()
+
+    def _animate_nav_indicator(self, index: int) -> None:
+        if not self.nav_buttons:
+            return
+        target_button = self.nav_buttons[index]
+        target = QRect(
+            target_button.x() + 2,
+            target_button.y() + 9,
+            3,
+            max(18, target_button.height() - 18),
+        )
+        if self.nav_indicator_animation is not None:
+            self.nav_indicator_animation.stop()
+        animation = QPropertyAnimation(self.nav_indicator, b"geometry", self)
+        animation.setDuration(235)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.setStartValue(self.nav_indicator.geometry())
+        animation.setEndValue(target)
+        self.nav_indicator_animation = animation
+        self.nav_indicator.raise_()
+        animation.start()
+
+    def _animate_page_sweep(self) -> None:
+        width = 220
+        if self.page_sweep_animation is not None:
+            self.page_sweep_animation.stop()
+        self.page_sweep.setGeometry(-width, 1, width, 3)
+        self.page_sweep.show()
+        self.page_sweep.raise_()
+        animation = QPropertyAnimation(self.page_sweep, b"geometry", self)
+        animation.setDuration(380)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.setStartValue(QRect(-width, 1, width, 3))
+        animation.setEndValue(QRect(self.pages.width(), 1, width, 3))
+        animation.finished.connect(lambda: self.page_sweep.hide())
+        self.page_sweep_animation = animation
+        animation.start()
+
+    def _animate_scan_spinner(self) -> None:
+        self.scan_spinner_index = (self.scan_spinner_index + 1) % len(self.scan_spinner_frames)
+        glyph = self.scan_spinner_frames[self.scan_spinner_index]
+        self.scan_button.setText(f"{glyph}   Scanning profiles…")
+
+    def _animate_catalog_loading(self) -> None:
+        self.catalog_spinner_index = (self.catalog_spinner_index + 1) % 4
+        dots = ("·", "··", "···", "····")[self.catalog_spinner_index]
+        self.activity_catalog_status.setText(f"Fetching public game catalog {dots} · UI remains responsive")
 
     def refresh_inventory(self) -> None:
         if not hasattr(self, "scan_button"):
             return
         self.scan_button.setEnabled(False)
-        self.scan_button.setText("Scanning…")
+        self.scan_spinner_index = 0
+        self.scan_button.setText("◴   Scanning profiles…")
+        self.scan_spinner_timer.start()
+        self.status_label.setObjectName("statusPill")
         self.status_label.setText("●  Scanning standard profile folders…")
         QTimer.singleShot(70, self._perform_scan)
 
@@ -1270,6 +1431,7 @@ class MainWindow(QMainWindow):
             self.status_label.setStyleSheet("color:#fca5a5;")
             QMessageBox.warning(self, "Scan failed", f"Could not inspect profile folders.\n\n{exc}")
         finally:
+            self.scan_spinner_timer.stop()
             self.scan_button.setEnabled(True)
             self.scan_button.setText("↻   Scan profiles")
 
@@ -1301,9 +1463,9 @@ class MainWindow(QMainWindow):
         storage_found = sum(
             1 for item in [*discord, *browsers] if item.get("local_storage_folder_found")
         )
-        self.metric_discord.set_value(f"{discord_found} / 3")
-        self.metric_browsers.set_value(len(browsers))
-        self.metric_storage.set_value(storage_found)
+        self.metric_discord.animate_value(discord_found, suffix=" / 3")
+        self.metric_browsers.animate_value(len(browsers))
+        self.metric_storage.animate_value(storage_found)
         self.discord_count.setText(f"{discord_found} found")
         self.browser_count.setText(f"{len(browsers)} detected")
 
