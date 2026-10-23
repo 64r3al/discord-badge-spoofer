@@ -28,9 +28,9 @@ class DesktopAppSmokeTests(unittest.TestCase):
         self.assertEqual(window.identity_verify_button.property("test_id"), "identityVerifyButton")
         self.assertEqual(window.identity_client_secret_input.echoMode(), QLineEdit.EchoMode.Password)
         self.assertIn("127.0.0.1:8765/callback", window.identity_redirect_label.text())
-        self.assertIn("No Discord session tokens or cookies", " ".join(
+        self.assertIn("no discord session tokens or cookies", " ".join(
             label.text() for label in window.findChildren(QLabel)
-        ))
+        ).casefold())
         self.assertEqual(window.identity_accounts_table.rowCount(), len(window.verified_accounts))
         window.close()
 
@@ -45,7 +45,7 @@ class DesktopAppSmokeTests(unittest.TestCase):
         }]
         window._render_verified_accounts()
         self.assertEqual(window.identity_accounts_table.rowCount(), 1)
-        self.assertIn("qa_account", window.identity_accounts_table.cellWidget(1, 1).findChildren(QLabel)[1].text())
+        self.assertIn("qa_account", window.identity_accounts_table.cellWidget(0, 1).findChildren(QLabel)[1].text())
         index = window.activity_profile_combo.findData("123456789012345678")
         self.assertGreaterEqual(index, 0)
         self.assertIn("TEST ACCOUNT", window.activity_profile_combo.itemText(index))
