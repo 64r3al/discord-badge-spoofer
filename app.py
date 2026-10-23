@@ -208,6 +208,7 @@ class MainWindow(QMainWindow):
         self.resize(1260, 840)
         self.setMinimumSize(1020, 700)
         self.setStyleSheet(STYLESHEET)
+        self.scan_completed = False
         self.report: dict[str, Any] = {
             "report_type": "local-session-inventory",
             "discord_clients": [],
@@ -602,6 +603,14 @@ class MainWindow(QMainWindow):
         return page
 
     def run_badge_readiness_check(self) -> None:
+        if not self.scan_completed:
+            QMessageBox.information(
+                self,
+                "Readiness check unavailable",
+                "The initial profile scan has not completed successfully. Wait for it to finish or click Scan profiles, then try again.",
+            )
+            return
+
         clients = [
             item for item in self.report.get("discord_clients", [])
             if item.get("user_data_found")
@@ -767,6 +776,7 @@ class MainWindow(QMainWindow):
             self.profile_rows = self._flatten_report(self.report)
             self._render_overview()
             self._populate_table()
+            self.scan_completed = True
             self.status_label.setText("●  Scan complete · local-only")
             self.status_label.setStyleSheet("color:#6ee7b7;")
         except Exception as exc:
