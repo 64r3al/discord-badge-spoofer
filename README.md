@@ -35,7 +35,7 @@ The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigat
 - **Browser profile inventory** — lists supported Chrome, Edge, Brave, Vivaldi, Firefox, and Opera profile folders in standard locations.
 - **Search and filter** — find entries by type, application, profile label, or home-relative path.
 - **Game badge guide** — current setup guidance for Game Time and Game Variety, plus a local check for Discord profile-folder presence and the running desktop process on Windows.
-- **Activity Lab simulator** — select demo games, set simulated hours, start/pause/stop an accelerated offline run, and review a timestamped local event log. It never accepts credentials or sends activity to Discord.
+- **Activity Lab simulator** — fetch the public detectable-game catalog, search game names or executable hints, select titles, set simulated hours, and test start/pause/stop behavior with a timestamped local log. Catalog metadata is cached locally; if the network is unavailable, the picker falls back to the last cache or built-in example games. It never accepts credentials or sends activity to Discord.
 - **CSV export** — create a spreadsheet-friendly metadata report.
 - **JSON export** — save the full metadata report, including its limitations.
 - **Animated startup splash** — a lightweight standard-library window shows a moving light sweep and setup progress while the local Python environment and Qt dependencies are prepared.
@@ -47,7 +47,7 @@ The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigat
 
 The **Game badges** page explains the official requirements and links to Discord's badge guide. Current official guidance says these badges count games detected by the Discord desktop app, require **Use data to personalize my Discord experience** to be enabled, and may take time to update. Console and mobile activity do not count toward these desktop badges, and some games may not be recognized.
 
-The **Activity Lab** page is an offline UI simulator for testing game selection, planned hours, progress, pause/resume/stop handling, and event logs. The displayed games and hours are synthetic test data. A detected Discord client label is shown for context only; it is not used to authenticate or submit activity. There are intentionally no token/cookie fields or Discord activity requests in this mode.
+The **Activity Lab** page fetches public Discord detectable-game metadata for the picker, including game names and executable hints, using the catalog sources documented in `game_catalog.py`. Fetching occurs in a background worker so the UI remains responsive. The catalog is cached under the user's application cache directory. When no endpoint is reachable and no valid cache exists, the eight built-in examples remain available. Game selection, planned hours, progress, pause/resume/stop controls, and event logs are still an **offline simulation**: the displayed hours are synthetic, the profile selector is display-only, and no authentication or Discord activity requests are made. The catalog describes games Discord may recognize; it does not guarantee detection or badge credit.
 
 The local readiness check can report detected standard Discord profile folders and, on Windows, whether a Discord desktop process appears to be running. It cannot verify your privacy setting, inspect your Discord account, or confirm that Discord has credited badge progress. Only Discord can confirm that.
 
@@ -129,7 +129,8 @@ Do not commit personal inventory reports or credential-bearing files to GitHub. 
 
 | File | Purpose |
 |---|---|
-| `app.py` | PySide6 desktop UI: dashboard, searchable inventory, Game Badges guide, offline Activity Lab simulator, readiness check and exports |
+| `app.py` | PySide6 desktop UI: dashboard, searchable inventory, Game Badges guide, searchable Activity Lab game picker, readiness check and exports |
+| `game_catalog.py` | Public detectable-game metadata fetch, normalization, cache and fallback examples |
 | `bootstrap.py` | Animated first-run setup splash, local environment preparation, dependency installation and app launch |
 | `session_inventory.py` | Metadata-only local profile inventory |
 | `tests/test_session_inventory.py` | Unit tests using temporary test directories |
@@ -145,7 +146,7 @@ Run the inventory tests from the repository root:
 
 ```powershell
 python -m unittest discover -s tests -v
-python -m py_compile app.py bootstrap.py session_inventory.py tests/test_session_inventory.py tests/test_app_smoke.py tests/test_windows_launcher.py tests/test_bootstrap_contract.py
+python -m py_compile app.py bootstrap.py game_catalog.py session_inventory.py tests/test_game_catalog.py tests/test_session_inventory.py tests/test_app_smoke.py tests/test_windows_launcher.py tests/test_bootstrap_contract.py
 ```
 
 These tests use temporary directories and do not open real user credential stores or send network requests.
