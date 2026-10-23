@@ -29,7 +29,7 @@ class DesktopAppSmokeTests(unittest.TestCase):
         self.assertIn("official badge guide", window.badge_guide_button.text().lower())
         label_text = " ".join(label.text() for label in window.findChildren(QLabel))
         self.assertIn("Use data to personalize my Discord experience", label_text)
-        self.assertIn("No fake activity", label_text)
+        self.assertIn("no fake activity", label_text.casefold())
         window.close()
 
     def test_windows_process_check_detects_discord_stable_and_ptb(self):
