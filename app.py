@@ -6,13 +6,15 @@ The existing spoofer.py is kept separate and is not invoked by this application.
 """
 from __future__ import annotations
 
+import csv
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -39,7 +41,7 @@ from session_inventory import build_inventory, write_csv_report
 
 
 APP_NAME = "IVX Discord Lab"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 STYLESHEET = """
 QMainWindow, QWidget#appRoot { background: #0a0c11; color: #e7eaf2; }
@@ -145,6 +147,39 @@ def clear_layout(layout: QVBoxLayout) -> None:
             widget.deleteLater()
 
 
+def discord_process_status() -> tuple[bool | None, str]:
+    """Check for a running Discord desktop process on Windows without reading account data."""
+    if sys.platform != "win32":
+        return None, "Automatic process detection is available on Windows only."
+
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None, "Windows could not provide a process list."
+
+    if result.returncode != 0:
+        return None, "Windows process detection did not complete."
+
+    try:
+        process_names = {
+            row[0].strip().casefold()
+            for row in csv.reader(result.stdout.splitlines())
+            if row
+        }
+    except csv.Error:
+        return None, "Windows returned an unreadable process list."
+
+    known_names = {"discord.exe", "discordptb.exe", "discordcanary.exe"}
+    running = sorted(process_names.intersection(known_names))
+    return (True, ", ".join(running)) if running else (False, "")
+
+
 class MetricCard(QFrame):
     def __init__(self, label: str, value: str = "—", accent: str = "#8b5cf6") -> None:
         super().__init__()
@@ -202,6 +237,7 @@ class MainWindow(QMainWindow):
         self.pages.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.pages.addWidget(self._scroll_page(self._build_overview_page()))
         self.pages.addWidget(self._scroll_page(self._build_profiles_page()))
+        self.pages.addWidget(self._scroll_page(self._build_badges_page()))
         self.pages.addWidget(self._scroll_page(self._build_exports_page()))
         self.pages.addWidget(self._scroll_page(self._build_about_page()))
         content_layout.addWidget(self.pages, 1)
@@ -237,6 +273,7 @@ class MainWindow(QMainWindow):
         nav_items = [
             ("◫", "Overview"),
             ("▤", "Local profiles"),
+            ("✦", "Game badges"),
             ("⇩", "Export reports"),
             ("ⓘ", "About & safety"),
         ]
@@ -431,6 +468,172 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         return page
 
+    def _build_badges_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(2, 2, 10, 15)
+        layout.setSpacing(17)
+
+        hero = QFrame()
+        hero.setObjectName("hero")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(22, 21, 22, 21)
+        hero_layout.setSpacing(9)
+        hero_layout.addWidget(make_label("Game Time & Game Variety", "heroTitle"))
+        hero_layout.addWidget(make_label(
+            "A practical setup guide for earning activity badges through real, detectable PC gameplay.",
+            "heroCopy"
+        ))
+        hero_layout.addWidget(make_label(
+            "NO TOKENS  ·  NO COOKIES  ·  NO FAKE ACTIVITY  ·  NO BADGE GUARANTEES",
+            "tinyLabel"
+        ))
+        layout.addWidget(hero)
+
+        badge_row = QHBoxLayout()
+        badge_row.setSpacing(14)
+        for title, body, accent in [
+            (
+                "GAME TIME",
+                "Discord counts eligible time spent playing games it detects while the desktop app is running. "
+                "Time may take a while to appear in your badge progress.",
+                "#8b5cf6",
+            ),
+            (
+                "GAME VARIETY",
+                "Discord counts different games it recognizes. Some titles may not be detected, and multiple "
+                "experiences within Roblox or Fortnite may count as one game.",
+                "#22d3ee",
+            ),
+        ]:
+            card = make_card()
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(18, 17, 18, 18)
+            card_layout.setSpacing(10)
+            accent_bar = QFrame()
+            accent_bar.setFixedSize(34, 3)
+            accent_bar.setStyleSheet(f"background:{accent};border:none;border-radius:1px;")
+            card_layout.addWidget(accent_bar)
+            card_layout.addWidget(make_label(title, "sectionTitle"))
+            card_layout.addWidget(make_label(body, "sectionHint"))
+            card_layout.addStretch(1)
+            badge_row.addWidget(card, 1)
+        layout.addLayout(badge_row)
+
+        setup_card = make_card()
+        setup_layout = QVBoxLayout(setup_card)
+        setup_layout.setContentsMargins(18, 17, 18, 18)
+        setup_layout.setSpacing(12)
+        setup_layout.addWidget(make_label("Before you test", "sectionTitle"))
+        steps = [
+            ("01", "Use Discord desktop",
+             "Keep the official Discord desktop app open while you actually play a supported PC game. "
+             "Console play and mobile play do not count toward these desktop activity badges."),
+            ("02", "Enable the required privacy setting",
+             "In Discord, open User Settings → Data & Privacy and enable “Use data to personalize my Discord experience.”"),
+            ("03", "Play games Discord recognizes",
+             "Use real gameplay rather than synthetic activity. Some smaller or unusual games may not be detected by Discord."),
+            ("04", "Check the Badge Directory later",
+             "Badge processing can be delayed. Review your profile’s Badge Directory; this app cannot read or confirm "
+             "Discord's server-side badge progress."),
+        ]
+        for number, heading, body in steps:
+            row = QHBoxLayout()
+            row.setSpacing(12)
+            marker = make_label(number)
+            marker.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            marker.setFixedSize(38, 38)
+            marker.setStyleSheet(
+                "background:#211c37;color:#c4b5fd;border:1px solid #423762;"
+                "border-radius:11px;font-size:12px;font-weight:800;"
+            )
+            copy = QVBoxLayout()
+            copy.setSpacing(4)
+            copy.addWidget(make_label(heading, "sectionTitle"))
+            copy.addWidget(make_label(body, "sectionHint"))
+            row.addWidget(marker, 0, Qt.AlignmentFlag.AlignTop)
+            row.addLayout(copy, 1)
+            setup_layout.addLayout(row)
+        layout.addWidget(setup_card)
+
+        diagnostic_card = make_card()
+        diagnostic_layout = QVBoxLayout(diagnostic_card)
+        diagnostic_layout.setContentsMargins(18, 17, 18, 18)
+        diagnostic_layout.setSpacing(10)
+        diagnostic_layout.addWidget(make_label("Local readiness check", "sectionTitle"))
+        diagnostic_layout.addWidget(make_label(
+            "Checks whether a standard Discord profile folder was found and, on Windows, whether a Discord desktop "
+            "process is running. It cannot inspect your privacy setting or confirm badge credit.",
+            "sectionHint"
+        ))
+        actions = QHBoxLayout()
+        self.badge_check_button = QPushButton("Run readiness check")
+        self.badge_check_button.setObjectName("primaryButton")
+        self.badge_check_button.setProperty("test_id", "badgeCheckButton")
+        self.badge_check_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.badge_check_button.clicked.connect(self.run_badge_readiness_check)
+        self.badge_guide_button = QPushButton("Open Discord’s official badge guide  ↗")
+        self.badge_guide_button.setObjectName("badgeGuideButton")
+        self.badge_guide_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.badge_guide_button.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(
+                "https://support.discord.com/hc/en-us/articles/44369363856663-Discord-Profile-Badges-What-Each-Badge-Means"
+            ))
+        )
+        actions.addWidget(self.badge_check_button)
+        actions.addWidget(self.badge_guide_button)
+        actions.addStretch(1)
+        diagnostic_layout.addLayout(actions)
+        layout.addWidget(diagnostic_card)
+
+        note = QFrame()
+        note.setStyleSheet("background:#211a12;border:1px solid #4b3520;border-radius:12px;")
+        note_layout = QVBoxLayout(note)
+        note_layout.setContentsMargins(15, 13, 15, 13)
+        note_layout.setSpacing(5)
+        note_layout.addWidget(make_label("Important limitation", "tinyLabel"))
+        note_layout.addWidget(make_label(
+            "No third-party tool can guarantee that Discord will grant or update a badge. This app does not generate "
+            "fake activity, reuse account tokens or cookies, or make account changes. Only Discord can confirm credited progress.",
+            "sectionHint"
+        ))
+        layout.addWidget(note)
+        layout.addStretch(1)
+        return page
+
+    def run_badge_readiness_check(self) -> None:
+        clients = [
+            item for item in self.report.get("discord_clients", [])
+            if item.get("user_data_found")
+        ]
+        lines = [
+            "LOCAL READINESS CHECK",
+            "",
+            f"Discord profile folders: {len(clients)} found out of {len(self.report.get('discord_clients', []))}.",
+        ]
+        if clients:
+            lines.append("Detected: " + ", ".join(str(item.get("client", "Discord")) for item in clients))
+        else:
+            lines.append("No standard Discord user-data folder was found. Run Scan profiles or install Discord desktop.")
+        running, details = discord_process_status()
+        if running is True:
+            lines.append(f"Discord desktop process: RUNNING ({details}).")
+        elif running is False:
+            lines.append("Discord desktop process: NOT DETECTED. Open the official Discord desktop app before playing.")
+        else:
+            lines.append(f"Discord desktop process: NOT VERIFIED ({details})")
+        lines.extend([
+            "",
+            "Manual check required: in Discord User Settings → Data & Privacy, enable "
+            "“Use data to personalize my Discord experience.”",
+            "",
+            "Play actual PC games that Discord recognizes. Then check your profile’s Badge Directory later; "
+            "progress may be delayed. This diagnostic cannot confirm badge credit.",
+        ])
+        QMessageBox.information(self, "Game badge readiness", "\n".join(lines))
+        self.status_label.setText("●  Local badge-readiness check complete")
+        self.status_label.setStyleSheet("color:#8f98ac;")
+
     def _build_exports_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -528,6 +731,7 @@ class MainWindow(QMainWindow):
         titles = [
             ("Overview", "A clear view of detected local profiles."),
             ("Local profiles", "Search and inspect profile-folder metadata."),
+            ("Game badges", "Check local Discord readiness and follow official badge requirements."),
             ("Export reports", "Save a local inventory in CSV or JSON format."),
             ("About & safety", "Understand the tool's scope and privacy boundaries."),
         ]
