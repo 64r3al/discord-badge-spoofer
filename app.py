@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QThread, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QApplication,
@@ -43,11 +43,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from game_catalog import FALLBACK_GAMES, fetch_detectable_games
 from session_inventory import build_inventory, write_csv_report
 
 
 APP_NAME = "IVX Discord Lab"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 
 STYLESHEET = """
 QMainWindow, QWidget#appRoot { background: #0a0c11; color: #e7eaf2; }
@@ -207,8 +208,26 @@ class MetricCard(QFrame):
         self.value_label.setText(str(value))
 
 
+class GameCatalogWorker(QThread):
+    """Fetch public game names/executable metadata without blocking the UI."""
+
+    catalog_ready = Signal(object, str, str)
+
+    def run(self) -> None:
+        games, source, message = fetch_detectable_games()
+        self.catalog_ready.emit(games, source, message)
+
+
+_ACTIVE_CATALOG_WORKERS: set[GameCatalogWorker] = set()
+
+
+def _release_game_catalog_worker(worker: GameCatalogWorker) -> None:
+    _ACTIVE_CATALOG_WORKERS.discard(worker)
+    worker.deleteLater()
+
+
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, auto_fetch_catalog: bool = True) -> None:
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} · {APP_VERSION}")
         self.resize(1260, 840)
@@ -223,6 +242,14 @@ class MainWindow(QMainWindow):
         }
         self.profile_rows: list[dict[str, str]] = []
         self.nav_buttons: list[QPushButton] = []
+        self.activity_catalog: list[dict[str, str]] = [dict(game) for game in FALLBACK_GAMES]
+        self.activity_catalog_by_id: dict[str, dict[str, str]] = {
+            game["id"]: game for game in self.activity_catalog
+        }
+        self.activity_selected_game_ids: set[str] = set()
+        self.activity_catalog_source = "Built-in fallback"
+        self.activity_catalog_worker: GameCatalogWorker | None = None
+        self.auto_fetch_catalog = auto_fetch_catalog
         self.activity_schedule: list[tuple[str, int]] = []
         self.activity_tick = 0
         self.activity_total_ticks = 0
@@ -262,6 +289,8 @@ class MainWindow(QMainWindow):
 
         self._animate_count = 0
         QTimer.singleShot(120, self.refresh_inventory)
+        if self.auto_fetch_catalog:
+            QTimer.singleShot(450, self.fetch_activity_catalog)
 
     def _build_sidebar(self) -> QWidget:
         sidebar = QWidget()
@@ -702,37 +731,39 @@ class MainWindow(QMainWindow):
         select_layout.setContentsMargins(18, 16, 18, 16)
         select_layout.setSpacing(11)
         select_head = QHBoxLayout()
-        select_head.addWidget(make_label("Choose demo games", "sectionTitle"), 1)
+        select_head.addWidget(make_label("Detectable game catalog", "sectionTitle"), 1)
         select_actions = QHBoxLayout()
-        self.activity_select_all_button = QPushButton("Select all")
+        self.activity_select_all_button = QPushButton("Select visible")
         self.activity_select_all_button.setObjectName("quietButton")
-        self.activity_clear_button = QPushButton("Clear")
+        self.activity_refresh_catalog_button = QPushButton("↻  Refresh catalog")
+        self.activity_refresh_catalog_button.setObjectName("quietButton")
+        self.activity_clear_button = QPushButton("Clear selection")
         self.activity_clear_button.setObjectName("quietButton")
         select_actions.addWidget(self.activity_select_all_button)
+        select_actions.addWidget(self.activity_refresh_catalog_button)
         select_actions.addWidget(self.activity_clear_button)
         select_head.addLayout(select_actions)
         select_layout.addLayout(select_head)
+
+        self.activity_catalog_status = make_label(
+            "Built-in fallback · 8 examples. Fetching Discord's public catalog on startup…",
+            "sectionHint",
+        )
+        select_layout.addWidget(self.activity_catalog_status)
+        self.activity_game_search = QLineEdit()
+        self.activity_game_search.setObjectName("activityGameSearch")
+        self.activity_game_search.setPlaceholderText("Search game name or executable…")
+        self.activity_game_search.textChanged.connect(self._render_activity_game_list)
+        select_layout.addWidget(self.activity_game_search)
 
         self.activity_game_list = QListWidget()
         self.activity_game_list.setObjectName("activityGameList")
         self.activity_game_list.setMinimumHeight(210)
         self.activity_game_list.setMaximumHeight(250)
         self.activity_game_list.setSpacing(3)
-        for game in (
-            "Counter-Strike 2",
-            "Fortnite",
-            "Minecraft",
-            "Roblox",
-            "Rocket League",
-            "Stardew Valley",
-            "Valorant",
-            "Apex Legends",
-        ):
-            item = QListWidgetItem(game)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            item.setCheckState(Qt.CheckState.Unchecked)
-            self.activity_game_list.addItem(item)
-        self.activity_game_list.itemChanged.connect(self._update_activity_total)
+        self.activity_game_list.setUniformItemSizes(True)
+        self.activity_game_list.itemChanged.connect(self._activity_game_item_changed)
+        self._render_activity_game_list()
         select_layout.addWidget(self.activity_game_list)
 
         config_row = QHBoxLayout()
@@ -817,6 +848,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(log_card)
 
         self.activity_select_all_button.clicked.connect(self._select_all_activity_games)
+        self.activity_refresh_catalog_button.clicked.connect(self.fetch_activity_catalog)
         self.activity_clear_button.clicked.connect(self._clear_activity_games)
         self.activity_start_button.clicked.connect(self.start_activity_simulation)
         self.activity_pause_button.clicked.connect(self.toggle_activity_simulation_pause)
@@ -841,6 +873,138 @@ class MainWindow(QMainWindow):
                 self.activity_profile_combo.addItem(client)
         else:
             self.activity_profile_combo.addItem("No detected Discord profile · demo mode")
+
+    def fetch_activity_catalog(self) -> None:
+        """Fetch public detectable-game metadata in a worker so the UI stays responsive."""
+        if self.activity_catalog_worker is not None and self.activity_catalog_worker.isRunning():
+            self._append_activity_log("Catalog refresh is already running.")
+            return
+        self.activity_refresh_catalog_button.setEnabled(False)
+        self.activity_catalog_status.setText("Fetching public game catalog… the UI remains responsive.")
+        self._append_activity_log("Fetching public detectable-game metadata. No credentials are sent.")
+        worker = GameCatalogWorker()
+        self.activity_catalog_worker = worker
+        _ACTIVE_CATALOG_WORKERS.add(worker)
+        worker.catalog_ready.connect(self._apply_activity_catalog)
+        worker.finished.connect(lambda w=worker: _release_game_catalog_worker(w))
+        worker.start()
+
+    def _apply_activity_catalog(self, games: object, source: str, message: str) -> None:
+        if not isinstance(games, list):
+            games = []
+        valid_games = [
+            item for item in games
+            if isinstance(item, dict) and item.get("id") and item.get("name")
+        ]
+        if valid_games:
+            previously_selected_names = {
+                self.activity_catalog_by_id[game_id]["name"].casefold()
+                for game_id in self.activity_selected_game_ids
+                if game_id in self.activity_catalog_by_id
+            }
+            self.activity_catalog = [
+                {
+                    "id": str(item["id"]),
+                    "name": str(item["name"]),
+                    "executable": str(item.get("executable") or "Executable not listed"),
+                }
+                for item in valid_games
+            ]
+            self.activity_catalog_by_id = {
+                game["id"]: game for game in self.activity_catalog
+            }
+            self.activity_selected_game_ids = {
+                game["id"] for game in self.activity_catalog
+                if game["name"].casefold() in previously_selected_names
+                or game["id"] in self.activity_selected_game_ids
+            }
+            self.activity_catalog_source = source
+            self.activity_catalog_status.setText(f"{source} · {len(self.activity_catalog):,} games available")
+            self._append_activity_log(message)
+        else:
+            self.activity_catalog_status.setText("Catalog unavailable · built-in fallback remains available")
+            self._append_activity_log("Catalog fetch returned no usable game list; kept the current catalog.")
+            if message:
+                self._append_activity_log(message[:600])
+        self.activity_refresh_catalog_button.setEnabled(True)
+        self._render_activity_game_list()
+        self._update_activity_total()
+
+    def _render_activity_game_list(self, *_args: object) -> None:
+        if not hasattr(self, "activity_game_list"):
+            return
+        query = self.activity_game_search.text().strip().casefold()
+        matches = [
+            game for game in self.activity_catalog
+            if not query
+            or query in game["name"].casefold()
+            or query in game["executable"].casefold()
+        ]
+        visible_limit = 250
+        visible = matches[:visible_limit]
+        self.activity_game_list.blockSignals(True)
+        self.activity_game_list.clear()
+        for game in visible:
+            label = game["name"]
+            if game["executable"] != "Executable not listed":
+                label = f'{game["name"]}  ·  {game["executable"]}'
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, game["id"])
+            item.setData(Qt.ItemDataRole.UserRole + 1, game["name"])
+            item.setToolTip(f'Game: {game["name"]}\nExecutable hint: {game["executable"]}')
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            item.setCheckState(
+                Qt.CheckState.Checked
+                if game["id"] in self.activity_selected_game_ids
+                else Qt.CheckState.Unchecked
+            )
+            self.activity_game_list.addItem(item)
+        self.activity_game_list.blockSignals(False)
+        if query:
+            self.activity_catalog_status.setText(
+                f"{self.activity_catalog_source} · {len(matches):,} matches"
+                + (f" · showing first {visible_limit}" if len(matches) > visible_limit else "")
+            )
+        elif len(matches) > visible_limit:
+            self.activity_catalog_status.setText(
+                f"{self.activity_catalog_source} · {len(matches):,} games · showing first {visible_limit}; search to narrow"
+            )
+        else:
+            self.activity_catalog_status.setText(f"{self.activity_catalog_source} · {len(matches):,} games")
+        self._update_activity_total()
+
+    def _activity_game_item_changed(self, item: QListWidgetItem) -> None:
+        game_id = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        if not game_id:
+            return
+        if item.checkState() == Qt.CheckState.Checked:
+            self.activity_selected_game_ids.add(game_id)
+        else:
+            self.activity_selected_game_ids.discard(game_id)
+        self._update_activity_total()
+
+    def _select_all_activity_games(self) -> None:
+        self.activity_game_list.blockSignals(True)
+        for index in range(self.activity_game_list.count()):
+            item = self.activity_game_list.item(index)
+            game_id = str(item.data(Qt.ItemDataRole.UserRole) or "")
+            if game_id:
+                self.activity_selected_game_ids.add(game_id)
+            item.setCheckState(Qt.CheckState.Checked)
+        self.activity_game_list.blockSignals(False)
+        self._update_activity_total()
+
+    def _clear_activity_games(self) -> None:
+        self.activity_selected_game_ids.clear()
+        self._render_activity_game_list()
+        self._update_activity_total()
+
+    def _selected_activity_games(self) -> list[str]:
+        return [
+            self.activity_catalog_by_id[game_id]["name"]
+            for game_id in self.activity_selected_game_ids
+            if game_id in self.activity_catalog_by_id
+        ]
 
     def _select_all_activity_games(self) -> None:
         self.activity_game_list.blockSignals(True)
