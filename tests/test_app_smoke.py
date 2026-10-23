@@ -71,6 +71,8 @@ class DesktopAppSmokeTests(unittest.TestCase):
         self.qt_app.processEvents()
         self.assertEqual(window.pages.currentIndex(), 3)
         self.assertEqual(window.page_title.text(), "Export reports")
+        for page_index in range(window.pages.count()):
+            self.assertIsNone(window.pages.widget(page_index).graphicsEffect())
         window.close()
 
 
