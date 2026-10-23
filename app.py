@@ -1360,6 +1360,7 @@ class MainWindow(QMainWindow):
     def _populate_activity_profiles(self) -> None:
         if not hasattr(self, "activity_profile_combo"):
             return
+        previous_id = str(self.activity_profile_combo.currentData() or "")
         self.activity_profile_combo.clear()
         if self.verified_accounts:
             for account in self.verified_accounts:
@@ -1368,6 +1369,9 @@ class MainWindow(QMainWindow):
                 suffix = f"@{account['username']} · {account['id']}"
                 label = f"{role} · {display_name} ({suffix})"
                 self.activity_profile_combo.addItem(label, account["id"])
+            preserved_index = self.activity_profile_combo.findData(previous_id)
+            if preserved_index >= 0:
+                self.activity_profile_combo.setCurrentIndex(preserved_index)
         else:
             self.activity_profile_combo.addItem("No verified identity · display-only", "")
 
