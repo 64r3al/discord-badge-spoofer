@@ -35,6 +35,7 @@ The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigat
 - **Browser profile inventory** — lists supported Chrome, Edge, Brave, Vivaldi, Firefox, and Opera profile folders in standard locations.
 - **Search and filter** — find entries by type, application, profile label, or home-relative path.
 - **Game badge guide** — current setup guidance for Game Time and Game Variety, plus a local check for Discord profile-folder presence and the running desktop process on Windows.
+- **Activity Lab simulator** — select demo games, set simulated hours, start/pause/stop an accelerated offline run, and review a timestamped local event log. It never accepts credentials or sends activity to Discord.
 - **CSV export** — create a spreadsheet-friendly metadata report.
 - **JSON export** — save the full metadata report, including its limitations.
 - **Animated startup splash** — a lightweight standard-library window shows a moving light sweep and setup progress while the local Python environment and Qt dependencies are prepared.
@@ -45,6 +46,8 @@ The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigat
 ### Game Time and Game Variety
 
 The **Game badges** page explains the official requirements and links to Discord's badge guide. Current official guidance says these badges count games detected by the Discord desktop app, require **Use data to personalize my Discord experience** to be enabled, and may take time to update. Console and mobile activity do not count toward these desktop badges, and some games may not be recognized.
+
+The **Activity Lab** page is an offline UI simulator for testing game selection, planned hours, progress, pause/resume/stop handling, and event logs. The displayed games and hours are synthetic test data. A detected Discord client label is shown for context only; it is not used to authenticate or submit activity. There are intentionally no token/cookie fields or Discord activity requests in this mode.
 
 The local readiness check can report detected standard Discord profile folders and, on Windows, whether a Discord desktop process appears to be running. It cannot verify your privacy setting, inspect your Discord account, or confirm that Discord has credited badge progress. Only Discord can confirm that.
 
@@ -126,7 +129,7 @@ Do not commit personal inventory reports or credential-bearing files to GitHub. 
 
 | File | Purpose |
 |---|---|
-| `app.py` | PySide6 desktop UI: dashboard, searchable inventory, Game Badges guide, readiness check and exports |
+| `app.py` | PySide6 desktop UI: dashboard, searchable inventory, Game Badges guide, offline Activity Lab simulator, readiness check and exports |
 | `bootstrap.py` | Animated first-run setup splash, local environment preparation, dependency installation and app launch |
 | `session_inventory.py` | Metadata-only local profile inventory |
 | `tests/test_session_inventory.py` | Unit tests using temporary test directories |
