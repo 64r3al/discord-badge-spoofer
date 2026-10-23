@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLabel
 
 from app import APP_VERSION, MainWindow, discord_process_status
@@ -17,7 +18,7 @@ class DesktopAppSmokeTests(unittest.TestCase):
 
     def test_window_builds_all_pages(self):
         window = MainWindow()
-        self.assertEqual(window.pages.count(), 5)
+        self.assertEqual(window.pages.count(), 6)
         self.assertEqual(window.windowTitle(), f"IVX Discord Lab · {APP_VERSION}")
         self.assertGreater(window.minimumWidth(), 0)
         window.close()
@@ -58,6 +59,29 @@ class DesktopAppSmokeTests(unittest.TestCase):
             self.assertEqual(discord_process_status(), (False, ""))
             run.assert_called_once()
 
+    def test_activity_lab_configures_game_hours_and_controls(self):
+        window = MainWindow()
+        self.assertEqual(window.activity_game_list.count(), 8)
+        self.assertEqual(window.activity_hours_spin.value(), 2)
+        self.assertFalse(window.activity_start_button.isEnabled())
+        window.activity_game_list.item(0).setCheckState(Qt.CheckState.Checked)
+        self.qt_app.processEvents()
+        self.assertTrue(window.activity_start_button.isEnabled())
+        self.assertIn("1 game selected · 2 simulated hours", window.activity_total_label.text())
+        window.activity_start_button.click()
+        self.qt_app.processEvents()
+        self.assertTrue(window.activity_timer.isActive())
+        self.assertIn("No Discord request will be made.", window.activity_log.toPlainText())
+        window.activity_pause_button.click()
+        self.assertTrue(window.activity_paused)
+        self.assertFalse(window.activity_timer.isActive())
+        window.activity_pause_button.click()
+        self.assertTrue(window.activity_timer.isActive())
+        window.activity_stop_button.click()
+        self.assertFalse(window.activity_timer.isActive())
+        self.assertIn("No activity or credentials sent to Discord", window.activity_log.toPlainText())
+        window.close()
+
     def test_navigation_switches_pages(self):
         window = MainWindow()
         window.navigate(1)
@@ -70,6 +94,10 @@ class DesktopAppSmokeTests(unittest.TestCase):
         window.navigate(3)
         self.qt_app.processEvents()
         self.assertEqual(window.pages.currentIndex(), 3)
+        self.assertEqual(window.page_title.text(), "Activity Lab")
+        window.navigate(4)
+        self.qt_app.processEvents()
+        self.assertEqual(window.pages.currentIndex(), 4)
         self.assertEqual(window.page_title.text(), "Export reports")
         for page_index in range(window.pages.count()):
             self.assertIsNone(window.pages.widget(page_index).graphicsEffect())
