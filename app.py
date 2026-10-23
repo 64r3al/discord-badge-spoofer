@@ -13,14 +13,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QFrame,
     QGraphicsDropShadowEffect,
-    QGraphicsOpacityEffect,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -41,7 +40,7 @@ from session_inventory import build_inventory, write_csv_report
 
 
 APP_NAME = "IVX Discord Lab"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 STYLESHEET = """
 QMainWindow, QWidget#appRoot { background: #0a0c11; color: #e7eaf2; }
@@ -217,8 +216,6 @@ class MainWindow(QMainWindow):
         }
         self.profile_rows: list[dict[str, str]] = []
         self.nav_buttons: list[QPushButton] = []
-        self.page_effects: dict[int, QGraphicsOpacityEffect] = {}
-        self.current_animation: QPropertyAnimation | None = None
 
         root = QWidget()
         root.setObjectName("appRoot")
@@ -235,6 +232,8 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self._build_topbar())
 
         self.pages = QStackedWidget()
+        self.pages.setObjectName("pageStack")
+        self.pages.setStyleSheet("QStackedWidget#pageStack { background: #0a0c11; border: none; }")
         self.pages.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.pages.addWidget(self._scroll_page(self._build_overview_page()))
         self.pages.addWidget(self._scroll_page(self._build_profiles_page()))
@@ -747,20 +746,11 @@ class MainWindow(QMainWindow):
         self.page_title.setText(titles[index][0])
         self.page_subtitle.setText(titles[index][1])
 
-        page = self.pages.widget(index)
-        effect = self.page_effects.get(index)
-        if effect is None:
-            effect = QGraphicsOpacityEffect(page)
-            page.setGraphicsEffect(effect)
-            self.page_effects[index] = effect
-        effect.setOpacity(0.35)
-        animation = QPropertyAnimation(effect, b"opacity", self)
-        animation.setDuration(210)
-        animation.setStartValue(0.35)
-        animation.setEndValue(1.0)
-        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self.current_animation = animation
-        animation.start()
+        # Keep the stacked pages fully opaque. Applying a persistent graphics-opacity
+        # effect to each scroll page can leave stale backing-store images on some Qt builds,
+        # which makes old pages appear layered behind the selected page.
+        self.pages.currentWidget().update()
+        self.pages.update()
 
     def refresh_inventory(self) -> None:
         if not hasattr(self, "scan_button"):
