@@ -266,20 +266,27 @@ def run_gui() -> int:
                                   fill="#edf0fa", font=("Segoe UI", 11, "bold"))
     detail_id = canvas.create_text(52, 228, anchor="nw", text="Preparing setup…", width=510,
                                    fill="#8993aa", font=("Segoe UI", 9), justify="left")
-    canvas.create_rectangle(52, 270, width - 52, 279, fill="#252a3a", outline="")
+    track_id = canvas.create_rectangle(52, 270, width - 52, 279, fill="#252a3a", outline="")
     fill_id = canvas.create_rectangle(52, 270, 52, 279, fill="#8b72ff", outline="")
     percent_id = canvas.create_text(width - 52, 293, anchor="ne", text="0%",
                                     fill="#9aa4bb", font=("Segoe UI", 8, "bold"))
     footer_id = canvas.create_text(52, 326, anchor="nw", text="Preparing…",
                                    fill="#59647d", font=("Segoe UI", 8))
     close_button = tk.Button(
-        root, text="Close", command=root.destroy, state="disabled",
+        root, text="Close", command=root.destroy, state="normal",
         bg="#202538", fg="#e3e7f4", activebackground="#303956",
         activeforeground="#ffffff", relief="flat", bd=0, padx=16, pady=5,
         font=("Segoe UI", 9, "bold"),
     )
-    close_window_id = canvas.create_window(width - 56, 335, window=close_button, anchor="center")
-    close_button.lower() if hasattr(close_button, "lower") else None
+    close_window_id = canvas.create_window(width - 62, 350, window=close_button, anchor="center", state="hidden")
+    error_text = tk.Text(
+        root, wrap="word", height=4, width=66, state="disabled",
+        bg="#0a0d14", fg="#cbd2e3", insertbackground="#ffffff",
+        relief="flat", bd=0, padx=8, pady=6,
+        font=("Consolas", 8),
+    )
+    error_window_id = canvas.create_window(52, 282, window=error_text, anchor="nw",
+                                           width=width - 104, height=65, state="hidden")
     failed = {"value": False}
     sweep_position = -260
     percent_value = {"value": 0}
@@ -304,7 +311,7 @@ def run_gui() -> int:
             x = sweep_position + index * 82
             canvas.coords(item, x, 40, x + 88, 40, x + 35, 155, x - 53, 155)
         # Gentle moving highlight in the progress track, so long installs still look alive.
-        if percent_value["value"] < 99:
+        if not failed["value"] and percent_value["value"] < 99:
             x = 52 + ((time.monotonic() * 80) % (width - 104))
             canvas.create_line(x, 270, min(width - 52, x + 28), 270, fill="#c0b5ff", width=2, tags="progress-glint")
             glints = canvas.find_withtag("progress-glint")
@@ -335,9 +342,21 @@ def run_gui() -> int:
                 elif kind == "error":
                     outcome["error"] = event[1]
                     failed["value"] = True
-                    set_stage(percent_value["value"], "Setup could not finish", str(event[1]))
-                    canvas.itemconfigure(footer_id, text="STARTUP FAILED  ·  SEE DETAILS ABOVE")
-                    close_button.configure(state="normal")
+                    error_message = str(event[1])
+                    summary = error_message.split("\n\n", 1)[0][:220]
+                    set_stage(percent_value["value"], "Setup could not finish", summary)
+                    canvas.itemconfigure(detail_id, text="Full diagnostic details are shown below.")
+                    canvas.itemconfigure(track_id, state="hidden")
+                    canvas.itemconfigure(fill_id, state="hidden")
+                    canvas.itemconfigure(percent_id, state="hidden")
+                    canvas.itemconfigure(footer_id, text="STARTUP FAILED  ·  REVIEW DETAILS")
+                    canvas.delete("progress-glint")
+                    error_text.configure(state="normal")
+                    error_text.delete("1.0", "end")
+                    error_text.insert("1.0", error_message[-1800:])
+                    error_text.configure(state="disabled")
+                    canvas.itemconfigure(error_window_id, state="normal")
+                    canvas.itemconfigure(close_window_id, state="normal")
                     root.protocol("WM_DELETE_WINDOW", root.destroy)
         except queue.Empty:
             pass
