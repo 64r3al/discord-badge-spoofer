@@ -34,11 +34,18 @@ The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigat
 - **Discord client detection** — checks the standard user-data paths for Stable, PTB, and Canary.
 - **Browser profile inventory** — lists supported Chrome, Edge, Brave, Vivaldi, Firefox, and Opera profile folders in standard locations.
 - **Search and filter** — find entries by type, application, profile label, or home-relative path.
+- **Game badge guide** — current setup guidance for Game Time and Game Variety, plus a local check for Discord profile-folder presence and the running desktop process on Windows.
 - **CSV export** — create a spreadsheet-friendly metadata report.
 - **JSON export** — save the full metadata report, including its limitations.
 - **Subtle UI animation** — Qt property animations provide short, reduced-complexity page transitions.
 - **Lightweight inventory** — the scanning module uses only the Python standard library.
 - **Clear separation** — the desktop interface never invokes `spoofer.py`.
+
+### Game Time and Game Variety
+
+The **Game badges** page explains the official requirements and links to Discord's badge guide. Current official guidance says these badges count games detected by the Discord desktop app, require **Use data to personalize my Discord experience** to be enabled, and may take time to update. Console and mobile activity do not count toward these desktop badges, and some games may not be recognized.
+
+The local readiness check can report detected standard Discord profile folders and, on Windows, whether a Discord desktop process appears to be running. It cannot verify your privacy setting, inspect your Discord account, or confirm that Discord has credited badge progress. Only Discord can confirm that.
 
 ### What the scan can tell you
 
@@ -116,7 +123,7 @@ Do not commit personal inventory reports or credential-bearing files to GitHub. 
 
 | File | Purpose |
 |---|---|
-| `app.py` | PySide6 desktop UI: dashboard, searchable inventory, animations, exports |
+| `app.py` | PySide6 desktop UI: dashboard, searchable inventory, Game Badges guide, readiness check, animations and exports |
 | `session_inventory.py` | Metadata-only local profile inventory |
 | `tests/test_session_inventory.py` | Unit tests using temporary test directories |
 | `spoofer.py` | Separate legacy experimental telemetry script; not integrated into the desktop UI |
