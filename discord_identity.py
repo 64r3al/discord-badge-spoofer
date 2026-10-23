@@ -248,6 +248,7 @@ def verify_discord_account(
     timeout: float = 180.0,
     opener: Callable[..., Any] | None = None,
     browser_open: Callable[[str], bool] | None = None,
+    cancel_event: Event | None = None,
 ) -> dict[str, Any]:
     """Run the official OAuth2 identify flow on a loopback-only callback server."""
     client_id = client_id.strip()
@@ -329,8 +330,14 @@ def verify_discord_account(
         if not open_browser(auth_url):
             raise IdentityVerificationError("Could not open a browser. Set a default browser and retry.")
         deadline = time.monotonic() + timeout
-        while not event.is_set() and time.monotonic() < deadline:
+        while (
+            not event.is_set()
+            and time.monotonic() < deadline
+            and not (cancel_event is not None and cancel_event.is_set())
+        ):
             server.handle_request()
+        if cancel_event is not None and cancel_event.is_set():
+            raise IdentityVerificationError("Account verification was cancelled.")
         if not event.is_set():
             raise IdentityVerificationError("Verification timed out. Retry and complete the Discord approval page.")
         if callback.get("error"):
