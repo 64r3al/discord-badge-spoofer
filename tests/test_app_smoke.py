@@ -6,7 +6,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit
 
 from app import APP_VERSION, MainWindow, discord_process_status
 
@@ -18,9 +18,37 @@ class DesktopAppSmokeTests(unittest.TestCase):
 
     def test_window_builds_all_pages(self):
         window = MainWindow(auto_fetch_catalog=False)
-        self.assertEqual(window.pages.count(), 6)
+        self.assertEqual(window.pages.count(), 7)
         self.assertEqual(window.windowTitle(), f"IVX Discord Lab · {APP_VERSION}")
         self.assertGreater(window.minimumWidth(), 0)
+        window.close()
+
+    def test_account_profiles_page_uses_official_identity_flow(self):
+        window = MainWindow(auto_fetch_catalog=False)
+        self.assertEqual(window.identity_verify_button.property("test_id"), "identityVerifyButton")
+        self.assertEqual(window.identity_client_secret_input.echoMode(), QLineEdit.EchoMode.Password)
+        self.assertIn("127.0.0.1:8765/callback", window.identity_redirect_label.text())
+        self.assertIn("No Discord session tokens or cookies", " ".join(
+            label.text() for label in window.findChildren(QLabel)
+        ))
+        self.assertEqual(window.identity_accounts_table.rowCount(), len(window.verified_accounts))
+        window.close()
+
+    def test_saved_identity_labels_appear_in_picker_without_auth_data(self):
+        window = MainWindow(auto_fetch_catalog=False)
+        window.verified_accounts = [{
+            "id": "123456789012345678",
+            "username": "qa_account",
+            "global_name": "QA Test",
+            "avatar": "",
+            "label": "TEST ACCOUNT",
+        }]
+        window._render_verified_accounts()
+        self.assertEqual(window.identity_accounts_table.rowCount(), 1)
+        self.assertIn("qa_account", window.identity_accounts_table.cellWidget(1, 1).findChildren(QLabel)[1].text())
+        index = window.activity_profile_combo.findData("123456789012345678")
+        self.assertGreaterEqual(index, 0)
+        self.assertIn("TEST ACCOUNT", window.activity_profile_combo.itemText(index))
         window.close()
 
     def test_game_badge_guide_has_safe_actions(self):
@@ -146,14 +174,18 @@ class DesktopAppSmokeTests(unittest.TestCase):
         window.navigate(2)
         self.qt_app.processEvents()
         self.assertEqual(window.pages.currentIndex(), 2)
-        self.assertEqual(window.page_title.text(), "Game badges")
+        self.assertEqual(window.page_title.text(), "Account profiles")
         window.navigate(3)
         self.qt_app.processEvents()
         self.assertEqual(window.pages.currentIndex(), 3)
-        self.assertEqual(window.page_title.text(), "Activity Lab")
+        self.assertEqual(window.page_title.text(), "Game badges")
         window.navigate(4)
         self.qt_app.processEvents()
         self.assertEqual(window.pages.currentIndex(), 4)
+        self.assertEqual(window.page_title.text(), "Activity Lab")
+        window.navigate(5)
+        self.qt_app.processEvents()
+        self.assertEqual(window.pages.currentIndex(), 5)
         self.assertEqual(window.page_title.text(), "Export reports")
         for page_index in range(window.pages.count()):
             self.assertIsNone(window.pages.widget(page_index).graphicsEffect())
