@@ -109,6 +109,35 @@ class DesktopAppSmokeTests(unittest.TestCase):
         self.assertIn("1 game selected", window.activity_total_label.text())
         window.close()
 
+    def test_animated_navigation_has_independent_overlays(self):
+        window = MainWindow(auto_fetch_catalog=False)
+        self.assertIsNotNone(window.nav_indicator)
+        self.assertIsNotNone(window.page_sweep)
+        window.navigate(2)
+        self.qt_app.processEvents()
+        self.assertIsNotNone(window.nav_indicator_animation)
+        self.assertIsNotNone(window.page_sweep_animation)
+        self.assertIsNone(window.pages.widget(2).graphicsEffect())
+        window.close()
+
+    def test_metric_card_counts_up_smoothly(self):
+        window = MainWindow(auto_fetch_catalog=False)
+        metric = window.metric_browsers
+        metric.animate_value(4, suffix=" profiles")
+        self.assertIsNotNone(metric._count_animation)
+        metric._count_animation.setCurrentTime(metric._count_animation.duration())
+        self.qt_app.processEvents()
+        self.assertEqual(metric.value_label.text(), "4 profiles")
+        window.close()
+
+    def test_scan_and_catalog_loading_indicators_update(self):
+        window = MainWindow(auto_fetch_catalog=False)
+        window._animate_scan_spinner()
+        self.assertTrue(window.scan_button.text().endswith("Scanning profiles…"))
+        window._animate_catalog_loading()
+        self.assertIn("Fetching public game catalog", window.activity_catalog_status.text())
+        window.close()
+
     def test_navigation_switches_pages(self):
         window = MainWindow(auto_fetch_catalog=False)
         window.navigate(1)
