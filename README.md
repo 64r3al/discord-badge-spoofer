@@ -39,7 +39,7 @@ The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigat
 - **CSV export** — create a spreadsheet-friendly metadata report.
 - **JSON export** — save the full metadata report, including its limitations.
 - **Animated startup splash** — a lightweight standard-library window shows a moving light sweep and setup progress while the local Python environment and Qt dependencies are prepared.
-- **Clean page switching** — the desktop UI avoids stacked opacity effects that could leave ghosted or layered content behind the selected page.
+- **Polished micro-animations** — animated navigation indicator and page light sweep, count-up dashboard metrics, scan/catalog loading indicators, hover states and responsive controls. Page content stays fully opaque to prevent ghosting.
 - **Lightweight inventory** — the scanning module uses only the Python standard library.
 - **Clear separation** — the desktop interface never invokes `spoofer.py`.
 
