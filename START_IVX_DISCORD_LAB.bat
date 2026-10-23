@@ -16,30 +16,29 @@ if not exist "requirements.txt" goto :missing_requirements
 if not exist "bootstrap.py" goto :missing_bootstrap
 
 where py >nul 2>&1
-if not errorlevel 1 (
-    py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
-    if not errorlevel 1 (
-        py -3 "bootstrap.py"
-        set "APP_EXIT=%ERRORLEVEL%"
-        goto :finish
-    )
-)
+if errorlevel 1 goto :try_python_command
+py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+if errorlevel 1 goto :try_python_command
+py -3 "bootstrap.py"
+goto :capture_exit
 
+:try_python_command
 where python >nul 2>&1
-if not errorlevel 1 (
-    python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
-    if not errorlevel 1 (
-        python "bootstrap.py"
-        set "APP_EXIT=%ERRORLEVEL%"
-        goto :finish
-    )
-)
+if errorlevel 1 goto :try_fixed_path
+python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+if errorlevel 1 goto :try_fixed_path
+python "bootstrap.py"
+goto :capture_exit
 
+:try_fixed_path
 call :find_python
 if errorlevel 1 goto :no_python
 "%BOOTSTRAP_PY%" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
 if errorlevel 1 goto :python_too_old
 "%BOOTSTRAP_PY%" "bootstrap.py"
+goto :capture_exit
+
+:capture_exit
 set "APP_EXIT=%ERRORLEVEL%"
 goto :finish
 
