@@ -886,8 +886,13 @@ class MainWindow(QMainWindow):
         self.activity_catalog_worker = worker
         _ACTIVE_CATALOG_WORKERS.add(worker)
         worker.catalog_ready.connect(self._apply_activity_catalog)
+        worker.finished.connect(lambda w=worker: self._activity_catalog_worker_finished(w))
         worker.finished.connect(lambda w=worker: _release_game_catalog_worker(w))
         worker.start()
+
+    def _activity_catalog_worker_finished(self, worker: GameCatalogWorker) -> None:
+        if self.activity_catalog_worker is worker:
+            self.activity_catalog_worker = None
 
     def _apply_activity_catalog(self, games: object, source: str, message: str) -> None:
         if not isinstance(games, list):
@@ -1028,7 +1033,11 @@ class MainWindow(QMainWindow):
         ]
 
     def _update_activity_total(self, *_args: object) -> None:
-        if not hasattr(self, "activity_game_list"):
+        if (
+            not hasattr(self, "activity_game_list")
+            or not hasattr(self, "activity_hours_spin")
+            or not hasattr(self, "activity_total_label")
+        ):
             return
         count = len(self._selected_activity_games())
         hours = count * self.activity_hours_spin.value()
