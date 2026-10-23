@@ -82,6 +82,33 @@ class DesktopAppSmokeTests(unittest.TestCase):
         self.assertIn("No activity or credentials sent to Discord", window.activity_log.toPlainText())
         window.close()
 
+    def test_catalog_result_populates_searchable_picker(self):
+        window = MainWindow(auto_fetch_catalog=False)
+        sample = [
+            {
+                "id": "catalog-1",
+                "name": "Planet Builder",
+                "executable": "planetbuilder.exe",
+            },
+            {
+                "id": "catalog-2",
+                "name": "Zeta Racing",
+                "executable": "zeta.exe",
+            },
+        ]
+        window._apply_activity_catalog(sample, "Test catalog", "Loaded 2 games.")
+        self.assertEqual(window.activity_game_list.count(), 2)
+        self.assertIn("Test catalog", window.activity_catalog_status.text())
+        window.activity_game_search.setText("planetbuilder.exe")
+        self.qt_app.processEvents()
+        self.assertEqual(window.activity_game_list.count(), 1)
+        self.assertIn("Planet Builder", window.activity_game_list.item(0).text())
+        window.activity_game_list.item(0).setCheckState(Qt.CheckState.Checked)
+        self.qt_app.processEvents()
+        self.assertEqual(len(window._selected_activity_games()), 1)
+        self.assertIn("1 game selected", window.activity_total_label.text())
+        window.close()
+
     def test_navigation_switches_pages(self):
         window = MainWindow(auto_fetch_catalog=False)
         window.navigate(1)
