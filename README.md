@@ -16,7 +16,7 @@ IVX Discord Lab is a Python project with a modern **PySide6 / Qt 6 desktop inter
 
 The repository also retains a separate legacy experimental script, `spoofer.py`, that constructs synthetic game-activity analytics events. That script is **not launched or controlled by the desktop interface**. Its operation against Discord's undocumented endpoints is unverified against the live service, may violate Discord's Terms of Service, and cannot guarantee Game Time or Game Variety badge progress.
 
-> **Privacy by design:** the desktop app does not read, decrypt, display, or export Discord tokens, browser cookies, saved passwords, browser login databases, or local-storage contents. It does not send reports to webhooks or upload them to a server.
+> **Privacy by design:** the desktop app never reads, decrypts, or stores Discord session tokens or browser cookies from local storage. The optional Account profiles feature uses Discord's official OAuth2 `identify` scope to display the account that approves sign-in; the developer-app Client Secret and short-lived OAuth access token are used in memory and not persisted. Only username, display name, user ID, avatar metadata, and your TEST/MAIN label are saved locally.
 
 ## Desktop app
 
@@ -34,6 +34,7 @@ The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigat
 - **Discord client detection** — checks the standard user-data paths for Stable, PTB, and Canary.
 - **Browser profile inventory** — lists supported Chrome, Edge, Brave, Vivaldi, Firefox, and Opera profile folders in standard locations.
 - **Search and filter** — find entries by type, application, profile label, or home-relative path.
+- **Account profiles** — use Discord's official OAuth2 `identify` scope to display the authorizing account's username, display name, profile picture and user ID. Mark saved identities as `TEST ACCOUNT` or `MAIN ACCOUNT — DO NOT USE`; only display metadata and labels are saved.
 - **Game badge guide** — current setup guidance for Game Time and Game Variety, plus a local check for Discord profile-folder presence and the running desktop process on Windows.
 - **Activity Lab simulator** — fetch the public detectable-game catalog, search game names or executable hints, select titles, set simulated hours, and test start/pause/stop behavior with a timestamped local log. Catalog metadata is cached locally; if the network is unavailable, the picker falls back to the last cache or built-in example games. It never accepts credentials or sends activity to Discord.
 - **CSV export** — create a spreadsheet-friendly metadata report.
@@ -42,6 +43,18 @@ The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigat
 - **Polished micro-animations** — animated navigation indicator and page light sweep, count-up dashboard metrics, scan/catalog loading indicators, hover states and responsive controls. Page content stays fully opaque to prevent ghosting.
 - **Lightweight inventory** — the scanning module uses only the Python standard library.
 - **Clear separation** — the desktop interface never invokes `spoofer.py`.
+
+### Account identity verification
+
+1. Create your own application at the [Discord Developer Portal](https://discord.com/developers/applications).
+2. Open the app's **OAuth2** page and add this exact redirect URI: `http://127.0.0.1:8765/callback`.
+3. In IVX Discord Lab, open **Account profiles** and enter that application's numeric Client ID and Client Secret. The Client Secret input is cleared when verification starts and the value is not written to disk.
+4. Click **Verify account with Discord**, approve the requested basic identity permission in the browser, and return to the app. The app uses the `identify` scope only.
+5. Label each saved identity `TEST ACCOUNT` or `MAIN ACCOUNT — DO NOT USE` and check the avatar and user ID before continuing.
+
+Saved identity metadata and cached avatar images are stored in the user's local application-data directory, outside the project folder. OAuth access tokens, refresh tokens, client secrets, cookies, and authorization codes are not saved. You can remove saved labels in the UI and revoke the app's authorization in Discord's Authorized Apps settings.
+
+**Important limitation:** OAuth verifies the account that approved in your browser. It does not independently prove which account is signed into a specific local Discord desktop installation. Ensure you authorize with the intended test account and compare the displayed identity with Discord itself.
 
 ### Game Time and Game Variety
 
@@ -120,6 +133,9 @@ Both formats exclude tokens, cookies, saved passwords, browser database contents
 - The user chooses the export destination in a Save dialog.
 - No webhook, telemetry upload, or background report upload is configured in the desktop app.
 - Credential stores, browser login databases, cookie databases, and local-storage contents are not opened.
+- Optional account matching uses Discord OAuth2 `identify`; account tokens and cookies are never extracted from local Discord or browser profiles.
+- The developer-app Client Secret and transient OAuth access token are kept in memory for the verification flow only, never in the saved identity file.
+- Saved identity data is limited to user ID, username, global name, avatar hash, and a manual TEST/MAIN label; cached avatar PNGs remain in the local app-data directory.
 - The scan does not modify Discord installations or profile directories.
 - Paths are home-relative where possible; exported files remain under the user's control.
 
@@ -129,7 +145,8 @@ Do not commit personal inventory reports or credential-bearing files to GitHub. 
 
 | File | Purpose |
 |---|---|
-| `app.py` | PySide6 desktop UI: dashboard, searchable inventory, Game Badges guide, searchable Activity Lab game picker, readiness check and exports |
+| `app.py` | PySide6 desktop UI: dashboard, searchable inventory, Account profiles, Game Badges guide, searchable Activity Lab game picker, readiness check and exports |
+| `discord_identity.py` | Local-loopback OAuth2 identity verification; allowlisted local display-metadata store |
 | `game_catalog.py` | Public detectable-game metadata fetch, normalization, cache and fallback examples |
 | `bootstrap.py` | Animated first-run setup splash, local environment preparation, dependency installation and app launch |
 | `session_inventory.py` | Metadata-only local profile inventory |
@@ -146,7 +163,7 @@ Run the inventory tests from the repository root:
 
 ```powershell
 python -m unittest discover -s tests -v
-python -m py_compile app.py bootstrap.py game_catalog.py session_inventory.py tests/test_game_catalog.py tests/test_session_inventory.py tests/test_app_smoke.py tests/test_windows_launcher.py tests/test_bootstrap_contract.py
+python -m py_compile app.py bootstrap.py discord_identity.py game_catalog.py session_inventory.py tests/test_discord_identity.py tests/test_game_catalog.py tests/test_session_inventory.py tests/test_app_smoke.py tests/test_windows_launcher.py tests/test_bootstrap_contract.py
 ```
 
 These tests use temporary directories and do not open real user credential stores or send network requests.
