@@ -17,14 +17,14 @@ class DesktopAppSmokeTests(unittest.TestCase):
         cls.qt_app = QApplication.instance() or QApplication([])
 
     def test_window_builds_all_pages(self):
-        window = MainWindow()
+        window = MainWindow(auto_fetch_catalog=False)
         self.assertEqual(window.pages.count(), 6)
         self.assertEqual(window.windowTitle(), f"IVX Discord Lab · {APP_VERSION}")
         self.assertGreater(window.minimumWidth(), 0)
         window.close()
 
     def test_game_badge_guide_has_safe_actions(self):
-        window = MainWindow()
+        window = MainWindow(auto_fetch_catalog=False)
         self.assertTrue(window.badge_check_button.isEnabled())
         self.assertEqual(window.badge_check_button.property("test_id"), "badgeCheckButton")
         self.assertIn("official badge guide", window.badge_guide_button.text().lower())
@@ -34,7 +34,7 @@ class DesktopAppSmokeTests(unittest.TestCase):
         window.close()
 
     def test_readiness_check_waits_for_initial_scan(self):
-        window = MainWindow()
+        window = MainWindow(auto_fetch_catalog=False)
         window.scan_completed = False
         with patch("app.QMessageBox.information") as information:
             window.run_badge_readiness_check()
@@ -60,7 +60,7 @@ class DesktopAppSmokeTests(unittest.TestCase):
             run.assert_called_once()
 
     def test_activity_lab_configures_game_hours_and_controls(self):
-        window = MainWindow()
+        window = MainWindow(auto_fetch_catalog=False)
         self.assertEqual(window.activity_game_list.count(), 8)
         self.assertEqual(window.activity_hours_spin.value(), 2)
         self.assertFalse(window.activity_start_button.isEnabled())
@@ -83,7 +83,7 @@ class DesktopAppSmokeTests(unittest.TestCase):
         window.close()
 
     def test_navigation_switches_pages(self):
-        window = MainWindow()
+        window = MainWindow(auto_fetch_catalog=False)
         window.navigate(1)
         self.qt_app.processEvents()
         self.assertEqual(window.pages.currentIndex(), 1)
