@@ -10,6 +10,7 @@ import csv
 import json
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFileDialog,
     QFrame,
     QGraphicsDropShadowEffect,
@@ -24,14 +26,19 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QScrollArea,
+    QSpinBox,
     QSizePolicy,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -40,7 +47,7 @@ from session_inventory import build_inventory, write_csv_report
 
 
 APP_NAME = "IVX Discord Lab"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 
 STYLESHEET = """
 QMainWindow, QWidget#appRoot { background: #0a0c11; color: #e7eaf2; }
@@ -216,6 +223,14 @@ class MainWindow(QMainWindow):
         }
         self.profile_rows: list[dict[str, str]] = []
         self.nav_buttons: list[QPushButton] = []
+        self.activity_schedule: list[tuple[str, int]] = []
+        self.activity_tick = 0
+        self.activity_total_ticks = 0
+        self.activity_current_game = -1
+        self.activity_paused = False
+        self.activity_timer = QTimer(self)
+        self.activity_timer.setInterval(300)
+        self.activity_timer.timeout.connect(self._activity_simulation_tick)
 
         root = QWidget()
         root.setObjectName("appRoot")
@@ -238,6 +253,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self._scroll_page(self._build_overview_page()))
         self.pages.addWidget(self._scroll_page(self._build_profiles_page()))
         self.pages.addWidget(self._scroll_page(self._build_badges_page()))
+        self.pages.addWidget(self._scroll_page(self._build_activity_lab_page()))
         self.pages.addWidget(self._scroll_page(self._build_exports_page()))
         self.pages.addWidget(self._scroll_page(self._build_about_page()))
         content_layout.addWidget(self.pages, 1)
@@ -274,6 +290,7 @@ class MainWindow(QMainWindow):
             ("◫", "Overview"),
             ("▤", "Local profiles"),
             ("✦", "Game badges"),
+            ("◉", "Activity Lab"),
             ("⇩", "Export reports"),
             ("ⓘ", "About & safety"),
         ]
@@ -642,6 +659,310 @@ class MainWindow(QMainWindow):
         self.status_label.setText("●  Local badge-readiness check complete")
         self.status_label.setStyleSheet("color:#8f98ac;")
 
+    def _build_activity_lab_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(2, 2, 10, 15)
+        layout.setSpacing(16)
+
+        hero = QFrame()
+        hero.setObjectName("hero")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(22, 20, 22, 20)
+        hero_layout.setSpacing(8)
+        hero_layout.addWidget(make_label("Activity Lab", "heroTitle"))
+        hero_layout.addWidget(make_label(
+            "Test game selection, planned hours, run controls, progress updates and logs in a safe offline simulation.",
+            "heroCopy"
+        ))
+        hero_layout.addWidget(make_label(
+            "SIMULATION ONLY  ·  NO TOKENS OR COOKIES  ·  NO DISCORD REQUESTS",
+            "tinyLabel"
+        ))
+        layout.addWidget(hero)
+
+        context_card = make_card()
+        context_layout = QVBoxLayout(context_card)
+        context_layout.setContentsMargins(18, 16, 18, 16)
+        context_layout.setSpacing(8)
+        context_layout.addWidget(make_label("Profile context", "sectionTitle"))
+        context_layout.addWidget(make_label(
+            "Choose a detected installation label for the demo report. This is display-only: the simulator does not log in, "
+            "read credentials, or send activity to Discord.",
+            "sectionHint"
+        ))
+        self.activity_profile_combo = QComboBox()
+        self.activity_profile_combo.setObjectName("activityProfileCombo")
+        self.activity_profile_combo.addItem("Scanning for local Discord profiles…")
+        context_layout.addWidget(self.activity_profile_combo)
+        layout.addWidget(context_card)
+
+        select_card = make_card()
+        select_layout = QVBoxLayout(select_card)
+        select_layout.setContentsMargins(18, 16, 18, 16)
+        select_layout.setSpacing(11)
+        select_head = QHBoxLayout()
+        select_head.addWidget(make_label("Choose demo games", "sectionTitle"), 1)
+        select_actions = QHBoxLayout()
+        self.activity_select_all_button = QPushButton("Select all")
+        self.activity_select_all_button.setObjectName("quietButton")
+        self.activity_clear_button = QPushButton("Clear")
+        self.activity_clear_button.setObjectName("quietButton")
+        select_actions.addWidget(self.activity_select_all_button)
+        select_actions.addWidget(self.activity_clear_button)
+        select_head.addLayout(select_actions)
+        select_layout.addLayout(select_head)
+
+        self.activity_game_list = QListWidget()
+        self.activity_game_list.setObjectName("activityGameList")
+        self.activity_game_list.setMinimumHeight(210)
+        self.activity_game_list.setMaximumHeight(250)
+        self.activity_game_list.setSpacing(3)
+        for game in (
+            "Counter-Strike 2",
+            "Fortnite",
+            "Minecraft",
+            "Roblox",
+            "Rocket League",
+            "Stardew Valley",
+            "Valorant",
+            "Apex Legends",
+        ):
+            item = QListWidgetItem(game)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self.activity_game_list.addItem(item)
+        self.activity_game_list.itemChanged.connect(self._update_activity_total)
+        select_layout.addWidget(self.activity_game_list)
+
+        config_row = QHBoxLayout()
+        config_row.setSpacing(14)
+        hours_col = QVBoxLayout()
+        hours_col.setSpacing(6)
+        hours_col.addWidget(make_label("Simulated hours per selected game", "sectionTitle"))
+        self.activity_hours_spin = QSpinBox()
+        self.activity_hours_spin.setObjectName("activityHoursSpin")
+        self.activity_hours_spin.setRange(1, 24)
+        self.activity_hours_spin.setValue(2)
+        self.activity_hours_spin.setSuffix(" hours")
+        self.activity_hours_spin.setToolTip("These are simulated values only; real time is not sent to Discord.")
+        self.activity_hours_spin.valueChanged.connect(self._update_activity_total)
+        hours_col.addWidget(self.activity_hours_spin)
+        config_row.addLayout(hours_col, 1)
+
+        self.activity_total_label = make_label("0 games selected · 0 simulated hours", "sectionHint")
+        self.activity_total_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        config_row.addWidget(self.activity_total_label, 1)
+        select_layout.addLayout(config_row)
+        layout.addWidget(select_card)
+
+        run_card = make_card()
+        run_layout = QVBoxLayout(run_card)
+        run_layout.setContentsMargins(18, 16, 18, 16)
+        run_layout.setSpacing(11)
+        run_layout.addWidget(make_label("Simulation run", "sectionTitle"))
+        self.activity_progress = QProgressBar()
+        self.activity_progress.setObjectName("activityProgress")
+        self.activity_progress.setRange(0, 100)
+        self.activity_progress.setValue(0)
+        self.activity_progress.setTextVisible(True)
+        self.activity_progress.setFormat("%p%  ·  demo progress")
+        self.activity_progress.setStyleSheet(
+            "QProgressBar { background:#202536; color:#e9e7ff; border:1px solid #34394e;"
+            "border-radius:7px; text-align:center; min-height:19px; font-size:10px; }"
+            "QProgressBar::chunk { background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            "stop:0 #7657ec,stop:1 #a78bfa); border-radius:6px; }"
+        )
+        run_layout.addWidget(self.activity_progress)
+        self.activity_status_label = make_label("Ready · select one or more games to begin.", "sectionHint")
+        run_layout.addWidget(self.activity_status_label)
+
+        buttons = QHBoxLayout()
+        self.activity_start_button = QPushButton("▶   Start simulation")
+        self.activity_start_button.setObjectName("primaryButton")
+        self.activity_start_button.setProperty("test_id", "activityStartButton")
+        self.activity_pause_button = QPushButton("Ⅱ   Pause")
+        self.activity_pause_button.setObjectName("quietButton")
+        self.activity_stop_button = QPushButton("■   Stop")
+        self.activity_stop_button.setObjectName("quietButton")
+        self.activity_pause_button.setEnabled(False)
+        self.activity_stop_button.setEnabled(False)
+        buttons.addWidget(self.activity_start_button)
+        buttons.addWidget(self.activity_pause_button)
+        buttons.addWidget(self.activity_stop_button)
+        buttons.addStretch(1)
+        run_layout.addLayout(buttons)
+        layout.addWidget(run_card)
+
+        log_card = make_card()
+        log_layout = QVBoxLayout(log_card)
+        log_layout.setContentsMargins(18, 16, 18, 16)
+        log_head = QHBoxLayout()
+        log_head.addWidget(make_label("Local activity log", "sectionTitle"), 1)
+        self.activity_clear_log_button = QPushButton("Clear log")
+        self.activity_clear_log_button.setObjectName("quietButton")
+        log_head.addWidget(self.activity_clear_log_button)
+        log_layout.addLayout(log_head)
+        self.activity_log = QTextEdit()
+        self.activity_log.setObjectName("activityLog")
+        self.activity_log.setReadOnly(True)
+        self.activity_log.setMinimumHeight(140)
+        self.activity_log.setMaximumHeight(190)
+        self.activity_log.setPlaceholderText("Simulation messages will appear here…")
+        self.activity_log.setStyleSheet(
+            "QTextEdit { background:#0b0e15; color:#aeb8ce; border:1px solid #252c3a;"
+            "border-radius:9px; padding:9px; font-family:Consolas,monospace; font-size:11px; }"
+        )
+        log_layout.addWidget(self.activity_log)
+        layout.addWidget(log_card)
+
+        self.activity_select_all_button.clicked.connect(self._select_all_activity_games)
+        self.activity_clear_button.clicked.connect(self._clear_activity_games)
+        self.activity_start_button.clicked.connect(self.start_activity_simulation)
+        self.activity_pause_button.clicked.connect(self.toggle_activity_simulation_pause)
+        self.activity_stop_button.clicked.connect(self.stop_activity_simulation)
+        self.activity_clear_log_button.clicked.connect(self.activity_log.clear)
+        self._update_activity_total()
+        self._append_activity_log("Ready. This local simulator never contacts Discord.")
+        layout.addStretch(1)
+        return page
+
+    def _populate_activity_profiles(self) -> None:
+        if not hasattr(self, "activity_profile_combo"):
+            return
+        self.activity_profile_combo.clear()
+        found = [
+            str(item.get("client", "Discord"))
+            for item in self.report.get("discord_clients", [])
+            if item.get("user_data_found")
+        ]
+        if found:
+            for client in found:
+                self.activity_profile_combo.addItem(client)
+        else:
+            self.activity_profile_combo.addItem("No detected Discord profile · demo mode")
+
+    def _select_all_activity_games(self) -> None:
+        self.activity_game_list.blockSignals(True)
+        for index in range(self.activity_game_list.count()):
+            self.activity_game_list.item(index).setCheckState(Qt.CheckState.Checked)
+        self.activity_game_list.blockSignals(False)
+        self._update_activity_total()
+
+    def _clear_activity_games(self) -> None:
+        self.activity_game_list.blockSignals(True)
+        for index in range(self.activity_game_list.count()):
+            self.activity_game_list.item(index).setCheckState(Qt.CheckState.Unchecked)
+        self.activity_game_list.blockSignals(False)
+        self._update_activity_total()
+
+    def _selected_activity_games(self) -> list[str]:
+        return [
+            self.activity_game_list.item(index).text()
+            for index in range(self.activity_game_list.count())
+            if self.activity_game_list.item(index).checkState() == Qt.CheckState.Checked
+        ]
+
+    def _update_activity_total(self, *_args: object) -> None:
+        if not hasattr(self, "activity_game_list"):
+            return
+        count = len(self._selected_activity_games())
+        hours = count * self.activity_hours_spin.value()
+        self.activity_total_label.setText(
+            f"{count} game{'s' if count != 1 else ''} selected · {hours} simulated hour{'s' if hours != 1 else ''}"
+        )
+        if hasattr(self, "activity_start_button") and not self.activity_timer.isActive():
+            self.activity_start_button.setEnabled(count > 0)
+
+    def _append_activity_log(self, message: str) -> None:
+        if hasattr(self, "activity_log"):
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.activity_log.append(f"[{timestamp}] {message}")
+
+    def start_activity_simulation(self) -> None:
+        if self.activity_timer.isActive():
+            return
+        games = self._selected_activity_games()
+        if not games:
+            QMessageBox.information(self, "Choose demo games", "Select at least one game before starting the simulation.")
+            return
+        hours = self.activity_hours_spin.value()
+        self.activity_schedule = [(game, hours) for game in games]
+        self.activity_tick = 0
+        self.activity_total_ticks = len(self.activity_schedule) * 8
+        self.activity_current_game = -1
+        self.activity_paused = False
+        self.activity_progress.setValue(0)
+        self.activity_status_label.setText("Simulation running · accelerated demo timeline.")
+        self.activity_start_button.setEnabled(False)
+        self.activity_pause_button.setEnabled(True)
+        self.activity_pause_button.setText("Ⅱ   Pause")
+        self.activity_stop_button.setEnabled(True)
+        self._append_activity_log(
+            f"Simulation started for {len(games)} demo game(s), {len(games) * hours} simulated hour(s)."
+        )
+        self._append_activity_log(f"Profile context: {self.activity_profile_combo.currentText()} (label only).")
+        self._append_activity_log("No credentials loaded. No Discord request will be made.")
+        self.activity_timer.start()
+
+    def toggle_activity_simulation_pause(self) -> None:
+        if not self.activity_timer.isActive() and not self.activity_paused:
+            return
+        if self.activity_paused:
+            self.activity_paused = False
+            self.activity_timer.start()
+            self.activity_pause_button.setText("Ⅱ   Pause")
+            self.activity_status_label.setText("Simulation resumed.")
+            self._append_activity_log("Simulation resumed.")
+        else:
+            self.activity_timer.stop()
+            self.activity_paused = True
+            self.activity_pause_button.setText("▶   Resume")
+            self.activity_status_label.setText("Simulation paused.")
+            self._append_activity_log("Simulation paused.")
+
+    def stop_activity_simulation(self) -> None:
+        was_running = self.activity_timer.isActive() or self.activity_paused
+        self.activity_timer.stop()
+        self.activity_paused = False
+        self.activity_start_button.setEnabled(bool(self._selected_activity_games()))
+        self.activity_pause_button.setEnabled(False)
+        self.activity_pause_button.setText("Ⅱ   Pause")
+        self.activity_stop_button.setEnabled(False)
+        if was_running:
+            self.activity_status_label.setText("Simulation stopped · no Discord activity was sent.")
+            self._append_activity_log("Simulation stopped by user. No activity or credentials sent to Discord.")
+        else:
+            self.activity_status_label.setText("Ready · select games and start a simulation.")
+
+    def _activity_simulation_tick(self) -> None:
+        if not self.activity_schedule or self.activity_total_ticks <= 0:
+            self.stop_activity_simulation()
+            return
+        self.activity_tick += 1
+        game_index = min((self.activity_tick - 1) // 8, len(self.activity_schedule) - 1)
+        if game_index != self.activity_current_game:
+            self.activity_current_game = game_index
+            game, hours = self.activity_schedule[game_index]
+            self.activity_status_label.setText(
+                f"Simulating {game} · {hours} planned hour(s) · offline demo"
+            )
+            self._append_activity_log(
+                f"Demo event: {game} · {hours} simulated hour(s). This is not Discord activity."
+            )
+        percent = min(100, round(self.activity_tick / self.activity_total_ticks * 100))
+        self.activity_progress.setValue(percent)
+        if self.activity_tick >= self.activity_total_ticks:
+            self.activity_timer.stop()
+            self.activity_paused = False
+            self.activity_start_button.setEnabled(bool(self._selected_activity_games()))
+            self.activity_pause_button.setEnabled(False)
+            self.activity_pause_button.setText("Ⅱ   Pause")
+            self.activity_stop_button.setEnabled(False)
+            self.activity_status_label.setText("Simulation complete · no Discord badge progress was requested.")
+            self._append_activity_log("Simulation completed successfully.")
+            self._append_activity_log("No activity, token, cookie, or badge request was sent to Discord.")
+
     def _build_exports_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -740,6 +1061,7 @@ class MainWindow(QMainWindow):
             ("Overview", "A clear view of detected local profiles."),
             ("Local profiles", "Search and inspect profile-folder metadata."),
             ("Game badges", "Check local Discord readiness and follow official badge requirements."),
+            ("Activity Lab", "Simulate game selection, durations, progress and logs offline."),
             ("Export reports", "Save a local inventory in CSV or JSON format."),
             ("About & safety", "Understand the tool's scope and privacy boundaries."),
         ]
@@ -766,6 +1088,7 @@ class MainWindow(QMainWindow):
             self.profile_rows = self._flatten_report(self.report)
             self._render_overview()
             self._populate_table()
+            self._populate_activity_profiles()
             self.scan_completed = True
             self.status_label.setText("●  Scan complete · local-only")
             self.status_label.setStyleSheet("color:#6ee7b7;")
