@@ -12,6 +12,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 from PySide6.QtCore import (
@@ -25,7 +26,7 @@ from PySide6.QtCore import (
     QVariantAnimation,
     Signal,
 )
-from PySide6.QtGui import QColor, QDesktopServices, QFont
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -53,12 +54,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from discord_identity import (
+    IdentityVerificationError,
+    avatar_cache_path,
+    identity_store_path,
+    load_verified_accounts,
+    save_verified_accounts,
+    verify_discord_account,
+)
 from game_catalog import FALLBACK_GAMES, fetch_detectable_games
 from session_inventory import build_inventory, write_csv_report
 
 
 APP_NAME = "IVX Discord Lab"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 
 STYLESHEET = """
 QMainWindow, QWidget#appRoot { background: #0a0c11; color: #e7eaf2; }
@@ -299,6 +308,47 @@ def _release_game_catalog_worker(worker: GameCatalogWorker) -> None:
     worker.deleteLater()
 
 
+class DiscordIdentityWorker(QThread):
+    """Run the official identify-only OAuth flow off the UI thread."""
+
+    identity_ready = Signal(object)
+    verification_failed = Signal(str)
+
+    def __init__(self, client_id: str, client_secret: str) -> None:
+        super().__init__()
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.cancel_event = Event()
+
+    def cancel(self) -> None:
+        self.cancel_event.set()
+
+    def run(self) -> None:
+        try:
+            identity = verify_discord_account(
+                self.client_id,
+                self.client_secret,
+                cancel_event=self.cancel_event,
+            )
+            self.identity_ready.emit(identity)
+        except IdentityVerificationError as exc:
+            self.verification_failed.emit(str(exc))
+        except Exception:
+            # Do not log request objects, credentials, OAuth codes, or access tokens.
+            self.verification_failed.emit("Verification failed unexpectedly. Review your Client ID, redirect URI, and network connection.")
+        finally:
+            self.client_secret = ""
+            self.client_id = ""
+
+
+_ACTIVE_IDENTITY_WORKERS: set[DiscordIdentityWorker] = set()
+
+
+def _release_identity_worker(worker: DiscordIdentityWorker) -> None:
+    _ACTIVE_IDENTITY_WORKERS.discard(worker)
+    worker.deleteLater()
+
+
 class MainWindow(QMainWindow):
     def __init__(self, auto_fetch_catalog: bool = True) -> None:
         super().__init__()
@@ -314,6 +364,8 @@ class MainWindow(QMainWindow):
             "limitations": [],
         }
         self.profile_rows: list[dict[str, str]] = []
+        self.verified_accounts: list[dict[str, str]] = load_verified_accounts()
+        self.identity_worker: DiscordIdentityWorker | None = None
         self.nav_buttons: list[QPushButton] = []
         self.nav_indicator_animation: QPropertyAnimation | None = None
         self.page_sweep_animation: QPropertyAnimation | None = None
@@ -363,6 +415,7 @@ class MainWindow(QMainWindow):
         self.pages.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.pages.addWidget(self._scroll_page(self._build_overview_page()))
         self.pages.addWidget(self._scroll_page(self._build_profiles_page()))
+        self.pages.addWidget(self._scroll_page(self._build_account_profiles_page()))
         self.pages.addWidget(self._scroll_page(self._build_badges_page()))
         self.pages.addWidget(self._scroll_page(self._build_activity_lab_page()))
         self.pages.addWidget(self._scroll_page(self._build_exports_page()))
@@ -408,6 +461,7 @@ class MainWindow(QMainWindow):
         nav_items = [
             ("◫", "Overview"),
             ("▤", "Local profiles"),
+            ("◎", "Account profiles"),
             ("✦", "Game badges"),
             ("◉", "Activity Lab"),
             ("⇩", "Export reports"),
@@ -613,6 +667,351 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         return page
 
+    def _build_account_profiles_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(2, 2, 10, 15)
+        layout.setSpacing(16)
+
+        hero = QFrame()
+        hero.setObjectName("hero")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(22, 20, 22, 20)
+        hero_layout.setSpacing(8)
+        hero_layout.addWidget(make_label("Account profiles", "heroTitle"))
+        hero_layout.addWidget(make_label(
+            "Verify usernames and avatars through Discord’s official sign-in page, then label each identity as TEST or MAIN.",
+            "heroCopy"
+        ))
+        hero_layout.addWidget(make_label(
+            "OFFICIAL OAUTH2 · IDENTIFY SCOPE ONLY · NO DISCORD SESSION TOKENS OR COOKIES",
+            "tinyLabel"
+        ))
+        layout.addWidget(hero)
+
+        config = make_card()
+        config_layout = QVBoxLayout(config)
+        config_layout.setContentsMargins(18, 17, 18, 18)
+        config_layout.setSpacing(10)
+        config_layout.addWidget(make_label("Connect your own Discord application", "sectionTitle"))
+        config_layout.addWidget(make_label(
+            "Create an application in the Discord Developer Portal. Under OAuth2, register the exact redirect URI below. "
+            "The Client Secret is kept in memory for this verification only; it is not saved.",
+            "sectionHint"
+        ))
+        self.identity_client_id_input = QLineEdit()
+        self.identity_client_id_input.setObjectName("identityClientId")
+        self.identity_client_id_input.setPlaceholderText("Application Client ID (numeric)")
+        config_layout.addWidget(self.identity_client_id_input)
+        self.identity_client_secret_input = QLineEdit()
+        self.identity_client_secret_input.setObjectName("identityClientSecret")
+        self.identity_client_secret_input.setPlaceholderText("Application Client Secret (never saved)")
+        self.identity_client_secret_input.setEchoMode(QLineEdit.EchoMode.Password)
+        config_layout.addWidget(self.identity_client_secret_input)
+
+        redirect_row = QHBoxLayout()
+        self.identity_redirect_label = make_label(
+            "Redirect URI: http://127.0.0.1:8765/callback",
+            "sectionHint",
+        )
+        self.identity_redirect_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.identity_copy_redirect_button = QPushButton("Copy redirect URI")
+        self.identity_copy_redirect_button.setObjectName("quietButton")
+        self.identity_copy_redirect_button.clicked.connect(
+            lambda: QApplication.clipboard().setText("http://127.0.0.1:8765/callback")
+        )
+        redirect_row.addWidget(self.identity_redirect_label, 1)
+        redirect_row.addWidget(self.identity_copy_redirect_button)
+        config_layout.addLayout(redirect_row)
+        self.identity_verify_button = QPushButton("Verify account with Discord  ↗")
+        self.identity_verify_button.setObjectName("primaryButton")
+        self.identity_verify_button.setProperty("test_id", "identityVerifyButton")
+        self.identity_verify_button.clicked.connect(self.start_identity_verification)
+        config_layout.addWidget(self.identity_verify_button)
+
+        self.identity_status_label = make_label(
+            "Not connected. Verification opens Discord in your browser and requests only basic identity information.",
+            "sectionHint",
+        )
+        self.identity_status_label.setWordWrap(True)
+        config_layout.addWidget(self.identity_status_label)
+        layout.addWidget(config)
+
+        guidance = QFrame()
+        guidance.setStyleSheet("background:#211a12;border:1px solid #4b3520;border-radius:12px;")
+        guidance_layout = QVBoxLayout(guidance)
+        guidance_layout.setContentsMargins(15, 12, 15, 12)
+        guidance_layout.setSpacing(5)
+        guidance_layout.addWidget(make_label("Important account-safety note", "tinyLabel"))
+        guidance_layout.addWidget(make_label(
+            "The avatar and name below identify the account that approved OAuth in your browser. They do not prove which account "
+            "is currently signed into a local Discord desktop installation. Make sure you authorize with the test account, "
+            "and compare the visible identity in Discord itself. Only display metadata and your labels are saved locally.",
+            "sectionHint",
+        ))
+        layout.addWidget(guidance)
+
+        accounts_card = make_card()
+        accounts_layout = QVBoxLayout(accounts_card)
+        accounts_layout.setContentsMargins(18, 16, 18, 16)
+        accounts_layout.setSpacing(10)
+        account_head = QHBoxLayout()
+        account_head.addWidget(make_label("Saved identity labels", "sectionTitle"), 1)
+        self.identity_count_label = make_label("0 accounts", "sectionHint")
+        account_head.addWidget(self.identity_count_label)
+        accounts_layout.addLayout(account_head)
+        self.identity_accounts_table = QTableWidget(0, 4)
+        self.identity_accounts_table.setObjectName("identityAccountsTable")
+        self.identity_accounts_table.setHorizontalHeaderLabels(
+            ["AVATAR", "DISCORD ACCOUNT", "USER ID", "SAFETY LABEL"]
+        )
+        self.identity_accounts_table.verticalHeader().setVisible(False)
+        self.identity_accounts_table.verticalHeader().setDefaultSectionSize(68)
+        self.identity_accounts_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.identity_accounts_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.identity_accounts_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.identity_accounts_table.setShowGrid(False)
+        self.identity_accounts_table.setAlternatingRowColors(True)
+        header = self.identity_accounts_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.identity_accounts_table.setMinimumHeight(185)
+        accounts_layout.addWidget(self.identity_accounts_table)
+
+        account_actions = QHBoxLayout()
+        self.identity_use_selected_button = QPushButton("Use selected for display context")
+        self.identity_use_selected_button.setObjectName("quietButton")
+        self.identity_remove_button = QPushButton("Remove selected")
+        self.identity_remove_button.setObjectName("quietButton")
+        self.identity_use_selected_button.clicked.connect(self.use_selected_identity_in_activity_lab)
+        self.identity_remove_button.clicked.connect(self.remove_selected_identity)
+        account_actions.addWidget(self.identity_use_selected_button)
+        account_actions.addWidget(self.identity_remove_button)
+        account_actions.addStretch(1)
+        accounts_layout.addLayout(account_actions)
+        layout.addWidget(accounts_card)
+        layout.addStretch(1)
+        self._render_verified_accounts()
+        return page
+
+    def start_identity_verification(self) -> None:
+        if self.identity_worker is not None and self.identity_worker.isRunning():
+            self.identity_status_label.setText("Verification is already running.")
+            return
+        client_id = self.identity_client_id_input.text().strip()
+        client_secret = self.identity_client_secret_input.text()
+        if not client_id.isdigit():
+            QMessageBox.information(
+                self,
+                "Client ID required",
+                "Enter the numeric Client ID from your own Discord developer application.",
+            )
+            return
+        if not client_secret.strip():
+            QMessageBox.information(
+                self,
+                "Client Secret required",
+                "Enter the Client Secret for your own application. It is used in memory for this verification and is not saved.",
+            )
+            return
+
+        # Clear the visible input immediately; the worker keeps the value only until the flow finishes.
+        self.identity_client_secret_input.clear()
+        self.identity_verify_button.setEnabled(False)
+        self.identity_status_label.setText("Opening Discord authorization… complete approval in your browser.")
+        worker = DiscordIdentityWorker(client_id, client_secret)
+        self.identity_worker = worker
+        _ACTIVE_IDENTITY_WORKERS.add(worker)
+        worker.identity_ready.connect(self._on_identity_verified)
+        worker.verification_failed.connect(self._on_identity_verification_failed)
+        worker.finished.connect(lambda w=worker: self._identity_worker_finished(w))
+        worker.finished.connect(lambda w=worker: _release_identity_worker(w))
+        worker.start()
+
+    def _identity_worker_finished(self, worker: DiscordIdentityWorker) -> None:
+        if self.identity_worker is worker:
+            self.identity_worker = None
+        if hasattr(self, "identity_verify_button"):
+            self.identity_verify_button.setEnabled(True)
+
+    def _on_identity_verified(self, identity: object) -> None:
+        if not isinstance(identity, dict):
+            self._on_identity_verification_failed("Discord returned an invalid identity response.")
+            return
+        user_id = str(identity.get("id", ""))
+        username = identity.get("username")
+        if not user_id.isdigit() or not isinstance(username, str) or not username:
+            self._on_identity_verification_failed("Discord returned an invalid username or user ID.")
+            return
+        previous = next((entry for entry in self.verified_accounts if entry["id"] == user_id), {})
+        record = {
+            "id": user_id,
+            "username": username,
+            "global_name": str(identity.get("global_name") or ""),
+            "avatar": str(identity.get("avatar") or ""),
+            "label": previous.get("label", "Unlabeled"),
+        }
+        self.verified_accounts = [entry for entry in self.verified_accounts if entry["id"] != user_id]
+        self.verified_accounts.insert(0, record)
+        try:
+            save_verified_accounts(self.verified_accounts)
+        except OSError as exc:
+            self.identity_status_label.setText(f"Identity verified, but labels could not be saved locally: {exc}")
+        avatar_bytes = identity.get("avatar_bytes")
+        if isinstance(avatar_bytes, bytes) and avatar_bytes:
+            avatar_pixmap = QPixmap()
+            if avatar_pixmap.loadFromData(avatar_bytes):
+                try:
+                    path = avatar_cache_path(user_id)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    avatar_pixmap.scaled(
+                        128, 128,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    ).save(str(path), "PNG")
+                except OSError:
+                    pass
+        self._render_verified_accounts()
+        self._populate_activity_profiles()
+        display_name = record["global_name"] or record["username"]
+        self.identity_status_label.setText(
+            f"Identity verified in browser: {display_name} (@{record['username']}) · ID {user_id}. "
+            "No account token or cookie was saved."
+        )
+        self._append_activity_log(f"Identity verified for display: @{record['username']} (ID {user_id}).")
+        if hasattr(self, "status_label"):
+            self.status_label.setText("●  Account identity verified · display metadata only")
+            self.status_label.setStyleSheet("color:#6ee7b7;")
+
+    def _on_identity_verification_failed(self, reason: str) -> None:
+        safe_reason = reason[:700]
+        if hasattr(self, "identity_status_label"):
+            self.identity_status_label.setText(f"Verification not completed: {safe_reason}")
+        if hasattr(self, "status_label"):
+            self.status_label.setText("●  Account verification not completed")
+            self.status_label.setStyleSheet("color:#fbbf77;")
+
+    def _render_verified_accounts(self) -> None:
+        if not hasattr(self, "identity_accounts_table"):
+            return
+        table = self.identity_accounts_table
+        table.setRowCount(0)
+        labels = ("Unlabeled", "TEST ACCOUNT", "MAIN ACCOUNT — DO NOT USE")
+        for account in self.verified_accounts:
+            row = table.rowCount()
+            table.insertRow(row)
+            table.setRowHeight(row, 68)
+
+            avatar_label = QLabel()
+            avatar_label.setFixedSize(48, 48)
+            avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            avatar_label.setStyleSheet(
+                "background:#24203e;color:#d8d0ff;border:1px solid #4c4379;"
+                "border-radius:14px;font-size:19px;font-weight:800;"
+            )
+            avatar_path = avatar_cache_path(account["id"])
+            pixmap = QPixmap(str(avatar_path)) if avatar_path.is_file() else QPixmap()
+            if not pixmap.isNull():
+                avatar_label.setPixmap(pixmap.scaled(
+                    48, 48,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation,
+                ))
+            else:
+                avatar_label.setText((account.get("global_name") or account["username"] or "?")[:1].upper())
+            table.setCellWidget(row, 0, avatar_label)
+
+            account_copy = QWidget()
+            account_copy_layout = QVBoxLayout(account_copy)
+            account_copy_layout.setContentsMargins(8, 5, 8, 5)
+            account_copy_layout.setSpacing(3)
+            display_name = account.get("global_name") or account["username"]
+            display_label = make_label(display_name, "sectionTitle")
+            username_label = make_label(f'@{account["username"]}', "sectionHint")
+            account_copy_layout.addWidget(display_label)
+            account_copy_layout.addWidget(username_label)
+            table.setCellWidget(row, 1, account_copy)
+
+            id_item = QTableWidgetItem(account["id"])
+            id_item.setData(Qt.ItemDataRole.UserRole, account["id"])
+            id_item.setToolTip("Discord user ID returned by the official identify endpoint.")
+            table.setItem(row, 2, id_item)
+
+            role_combo = QComboBox()
+            role_combo.addItems(labels)
+            role_combo.setCurrentText(account.get("label", "Unlabeled"))
+            role_combo.currentTextChanged.connect(
+                lambda value, uid=account["id"]: self._set_identity_label(uid, value)
+            )
+            table.setCellWidget(row, 3, role_combo)
+
+        self.identity_count_label.setText(
+            f"{len(self.verified_accounts)} saved account{'s' if len(self.verified_accounts) != 1 else ''}"
+        )
+        self._populate_activity_profiles()
+
+    def _set_identity_label(self, user_id: str, label: str) -> None:
+        for account in self.verified_accounts:
+            if account["id"] == user_id:
+                account["label"] = label
+                break
+        try:
+            save_verified_accounts(self.verified_accounts)
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not save label", f"The label could not be saved locally.\n\n{exc}")
+        self._populate_activity_profiles()
+
+    def remove_selected_identity(self) -> None:
+        row = self.identity_accounts_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Select an account", "Select an account row to remove its saved display metadata.")
+            return
+        item = self.identity_accounts_table.item(row, 2)
+        if item is None:
+            return
+        user_id = item.data(Qt.ItemDataRole.UserRole) or item.text()
+        self.verified_accounts = [account for account in self.verified_accounts if account["id"] != user_id]
+        try:
+            save_verified_accounts(self.verified_accounts)
+            avatar_path = avatar_cache_path(str(user_id))
+            if avatar_path.exists():
+                avatar_path.unlink()
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not remove account", f"Local account metadata could not be removed.\n\n{exc}")
+        self._render_verified_accounts()
+        self.identity_status_label.setText("Saved account display metadata removed locally. This does not affect the Discord account.")
+
+    def use_selected_identity_in_activity_lab(self) -> None:
+        row = self.identity_accounts_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Select an account", "Choose a verified identity row first.")
+            return
+        item = self.identity_accounts_table.item(row, 2)
+        if item is None:
+            return
+        user_id = str(item.data(Qt.ItemDataRole.UserRole) or item.text())
+        if hasattr(self, "activity_profile_combo"):
+            index = self.activity_profile_combo.findData(user_id)
+            if index >= 0:
+                self.activity_profile_combo.setCurrentIndex(index)
+        self.navigate(4)
+        account = next((entry for entry in self.verified_accounts if entry["id"] == user_id), None)
+        if account:
+            self._append_activity_log(
+                f"Selected verified identity for display context: @{account['username']} (ID {account['id']}). "
+                "This does not connect an account session or send activity."
+            )
+
+    def closeEvent(self, event) -> None:
+        if self.identity_worker is not None and self.identity_worker.isRunning():
+            self.identity_worker.cancel()
+        self.activity_timer.stop()
+        self.catalog_spinner_timer.stop()
+        self.scan_spinner_timer.stop()
+        super().closeEvent(event)
+
     def _build_badges_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -813,15 +1212,15 @@ class MainWindow(QMainWindow):
         context_layout = QVBoxLayout(context_card)
         context_layout.setContentsMargins(18, 16, 18, 16)
         context_layout.setSpacing(8)
-        context_layout.addWidget(make_label("Profile context", "sectionTitle"))
+        context_layout.addWidget(make_label("Verified account context", "sectionTitle"))
         context_layout.addWidget(make_label(
-            "Choose a detected installation label for the demo report. This is display-only: the simulator does not log in, "
-            "read credentials, or send activity to Discord.",
+            "Choose a previously verified identity for visual reference. This selection does not authenticate a Discord desktop "
+            "installation or send activity. Confirm the displayed name and avatar before doing anything in Discord.",
             "sectionHint"
         ))
         self.activity_profile_combo = QComboBox()
         self.activity_profile_combo.setObjectName("activityProfileCombo")
-        self.activity_profile_combo.addItem("Scanning for local Discord profiles…")
+        self.activity_profile_combo.addItem("No verified identity · display-only")
         context_layout.addWidget(self.activity_profile_combo)
         layout.addWidget(context_card)
 
@@ -962,16 +1361,15 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "activity_profile_combo"):
             return
         self.activity_profile_combo.clear()
-        found = [
-            str(item.get("client", "Discord"))
-            for item in self.report.get("discord_clients", [])
-            if item.get("user_data_found")
-        ]
-        if found:
-            for client in found:
-                self.activity_profile_combo.addItem(client)
+        if self.verified_accounts:
+            for account in self.verified_accounts:
+                role = account.get("label", "Unlabeled")
+                display_name = account.get("global_name") or account["username"]
+                suffix = f"@{account['username']} · {account['id']}"
+                label = f"{role} · {display_name} ({suffix})"
+                self.activity_profile_combo.addItem(label, account["id"])
         else:
-            self.activity_profile_combo.addItem("No detected Discord profile · demo mode")
+            self.activity_profile_combo.addItem("No verified identity · display-only", "")
 
     def fetch_activity_catalog(self) -> None:
         """Fetch public detectable-game metadata in a worker so the UI stays responsive."""
@@ -1337,6 +1735,7 @@ class MainWindow(QMainWindow):
         titles = [
             ("Overview", "A clear view of detected local profiles."),
             ("Local profiles", "Search and inspect profile-folder metadata."),
+            ("Account profiles", "Verify account names and avatars through official Discord OAuth2."),
             ("Game badges", "Check local Discord readiness and follow official badge requirements."),
             ("Activity Lab", "Simulate game selection, durations, progress and logs offline."),
             ("Export reports", "Save a local inventory in CSV or JSON format."),
