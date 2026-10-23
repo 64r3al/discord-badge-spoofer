@@ -79,12 +79,13 @@ def load_verified_accounts(path: Path | None = None) -> list[dict[str, str]]:
         global_name = entry.get("global_name", "")
         avatar = entry.get("avatar", "")
         label = entry.get("label", "Unlabeled")
+        label = label if isinstance(label, str) and label in allowed_labels else "Unlabeled"
         clean.append({
             "id": user_id,
             "username": username[:128],
             "global_name": global_name[:128] if isinstance(global_name, str) else "",
             "avatar": avatar[:256] if isinstance(avatar, str) else "",
-            "label": label if label in allowed_labels else "Unlabeled",
+            "label": label,
         })
         seen.add(user_id)
     return clean
@@ -107,12 +108,13 @@ def save_verified_accounts(
         global_name = entry.get("global_name", "")
         avatar = entry.get("avatar", "")
         label = entry.get("label", "Unlabeled")
+        label = label if isinstance(label, str) and label in allowed_labels else "Unlabeled"
         clean.append({
             "id": user_id,
             "username": username[:128],
             "global_name": global_name[:128] if isinstance(global_name, str) else "",
             "avatar": avatar[:256] if isinstance(avatar, str) else "",
-            "label": label if label in allowed_labels else "Unlabeled",
+            "label": label,
         })
         seen.add(user_id)
 
@@ -122,11 +124,18 @@ def save_verified_accounts(
     os.replace(temporary, path)
 
 
-def avatar_url(user_id: str, avatar_hash: str) -> str:
-    if not user_id.isdigit() or not avatar_hash:
+def avatar_url(user_id: str, avatar_hash: str, discriminator: str = "0") -> str:
+    if not user_id.isdigit():
         return ""
-    extension = "gif" if avatar_hash.startswith("a_") else "png"
-    return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.{extension}?size=128"
+    if avatar_hash:
+        extension = "gif" if avatar_hash.startswith("a_") else "png"
+        return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.{extension}?size=128"
+    try:
+        old_discriminator = int(discriminator)
+    except (TypeError, ValueError):
+        old_discriminator = 0
+    default_index = old_discriminator % 5 if old_discriminator else (int(user_id) >> 22) % 6
+    return f"https://cdn.discordapp.com/embed/avatars/{default_index}.png"
 
 
 def _read_json_response(
@@ -232,12 +241,13 @@ def exchange_code_for_identity(
 
     avatar_hash = user.get("avatar")
     avatar_hash = avatar_hash if isinstance(avatar_hash, str) else ""
+    discriminator = str(user.get("discriminator", "0"))
     return {
         "id": user_id,
         "username": username,
         "global_name": user.get("global_name") if isinstance(user.get("global_name"), str) else "",
         "avatar": avatar_hash,
-        "avatar_url": avatar_url(user_id, avatar_hash),
+        "avatar_url": avatar_url(user_id, avatar_hash, discriminator),
     }
 
 
@@ -275,7 +285,7 @@ def verify_discord_account(
                 return
             query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
             returned_state = query.get("state", [""])[0]
-            issuer = query.get("iss", ["https://discord.com"])[0]
+            issuer = query.get("iss", [""])[0]
             if returned_state != expected_state or issuer != "https://discord.com":
                 callback["error"] = "The OAuth state or issuer check failed. Please restart verification."
             elif query.get("error"):
