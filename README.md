@@ -20,7 +20,7 @@ The repository also retains a separate legacy experimental script, `spoofer.py`,
 
 ## Desktop app
 
-The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigation, inventory cards, a searchable profile table, subtle fade transitions, and local export dialogs.
+The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigation, inventory cards, a searchable profile table, clean page switching, animated first-run setup, and local export dialogs.
 
 ![Tests](https://github.com/64r3al/discord-badge-spoofer/actions/workflows/tests.yml/badge.svg)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)
@@ -37,7 +37,8 @@ The interface uses PySide6 and Qt 6 with a polished dark layout, sidebar navigat
 - **Game badge guide** — current setup guidance for Game Time and Game Variety, plus a local check for Discord profile-folder presence and the running desktop process on Windows.
 - **CSV export** — create a spreadsheet-friendly metadata report.
 - **JSON export** — save the full metadata report, including its limitations.
-- **Subtle UI animation** — Qt property animations provide short, reduced-complexity page transitions.
+- **Animated startup splash** — a lightweight standard-library window shows a moving light sweep and setup progress while the local Python environment and Qt dependencies are prepared.
+- **Clean page switching** — the desktop UI avoids stacked opacity effects that could leave ghosted or layered content behind the selected page.
 - **Lightweight inventory** — the scanning module uses only the Python standard library.
 - **Clear separation** — the desktop interface never invokes `spoofer.py`.
 
@@ -65,13 +66,15 @@ The scan tells you whether standard folders exist. It does **not** establish tha
 2. Open the extracted `discord-badge-spoofer` folder.
 3. Double-click **`START_IVX_DISCORD_LAB.bat`**.
 
-The launcher will:
+The launcher opens an animated setup splash and will:
 
 - find Python 3.10 or newer;
-- create a project-local `.venv` folder on first launch;
-- install `requirements.txt` if PySide6 is not installed in that environment;
-- open the IVX Discord Lab desktop UI;
-- keep the console open if setup or launch fails so the error can be read.
+- show progress while it creates or repairs the project-local `.venv` folder;
+- install `requirements.txt` if the Qt desktop dependency is missing;
+- show diagnostic details if setup fails;
+- launch the IVX Discord Lab desktop UI and keep the launcher open until the UI closes.
+
+The splash uses Python's standard library, so users do not need to install PySide6 before seeing setup progress. Application startup logs are saved locally under `%LOCALAPPDATA%\\IVXDiscordLab\\app.log` on Windows.
 
 The launcher runs `app.py` only. It does **not** launch `spoofer.py`. Keep the launcher and the project files together in the extracted project folder.
 
@@ -123,7 +126,8 @@ Do not commit personal inventory reports or credential-bearing files to GitHub. 
 
 | File | Purpose |
 |---|---|
-| `app.py` | PySide6 desktop UI: dashboard, searchable inventory, Game Badges guide, readiness check, animations and exports |
+| `app.py` | PySide6 desktop UI: dashboard, searchable inventory, Game Badges guide, readiness check and exports |
+| `bootstrap.py` | Animated first-run setup splash, local environment preparation, dependency installation and app launch |
 | `session_inventory.py` | Metadata-only local profile inventory |
 | `tests/test_session_inventory.py` | Unit tests using temporary test directories |
 | `spoofer.py` | Separate legacy experimental telemetry script; not integrated into the desktop UI |
@@ -138,7 +142,7 @@ Run the inventory tests from the repository root:
 
 ```powershell
 python -m unittest discover -s tests -v
-python -m py_compile app.py session_inventory.py tests/test_session_inventory.py
+python -m py_compile app.py bootstrap.py session_inventory.py tests/test_session_inventory.py tests/test_app_smoke.py tests/test_windows_launcher.py tests/test_bootstrap_contract.py
 ```
 
 These tests use temporary directories and do not open real user credential stores or send network requests.
