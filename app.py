@@ -701,10 +701,10 @@ class MainWindow(QMainWindow):
             ("WHAT THIS APP DOES NOT DO",
              "It does not extract, decrypt, display, or export account tokens, cookies, saved passwords, browser login databases, "
              "or storage contents. It does not send reports to a webhook or run the separate spoofer.py file."),
-            ("ABOUT THE EXPERIMENTAL SPOOFER",
-             "The repository also contains a separate legacy script that constructs synthetic Discord game-activity telemetry "
-             "for experimental badge manipulation. Its behavior is not integrated into this UI, not verified against the live service, "
-             "and may violate Discord's Terms of Service. Badge progress is not guaranteed."),
+            ("SEPARATE LEGACY SCRIPT",
+             "The repository retains a separate legacy script that constructs synthetic Discord game-activity telemetry. "
+             "It is not integrated into this UI, relies on undocumented service behavior, and may violate Discord's Terms of Service. "
+             "This app does not run it, reuse account credentials, or guarantee badge progress."),
             ("DATA & PRIVACY",
              "Scanning is local. The only files created by an export are the file you explicitly choose in the Save dialog. "
              "Paths are made relative to your home folder when possible."),
